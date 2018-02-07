@@ -12,18 +12,14 @@ import (
 
 var inputLines = make(map[int]string)
 
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
 func getInputLines() map[int]string {
 	flag.Parse()
 	var data []byte
 	var err error
 	data, err = ioutil.ReadAll(os.Stdin)
-	check(err)
+	if err != nil {
+		panic(err)
+	}
 	lines := strings.Split(string(data), "\n")
 	for i, line := range lines {
 		if line != "" {
