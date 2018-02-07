@@ -2,7 +2,13 @@
 
 json_encode package pipes input into JSON for further processing.
 
-Usage :
+## Compilation
+
+    git clone https://github.com/fedir/json_encode.git
+    cd json_encode
+    go build
+
+## Usage
 
     echo "Hello world" | ./json_encode
     {"0":"Hello world"}
