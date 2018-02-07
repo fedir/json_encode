@@ -2,11 +2,17 @@
 
 json_encode package pipes input into JSON for further processing.
 
-## Compilation
+## Installation
+
+golang 1.9+ should be installed. The environment installation is very simple : https://golang.org/doc/install
+
+To compile :
 
     git clone https://github.com/fedir/json_encode.git
     cd json_encode
     go build
+
+After put compiled `json_encode` in Your favourite bin folder.
 
 ## Usage
 
