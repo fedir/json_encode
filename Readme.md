@@ -4,7 +4,7 @@ json_encode package pipes input into JSON for further processing.
 
 ## Installation
 
-golang 1.9+ should be installed. The environment installation is very simple : https://golang.org/doc/install
+golang 1.9+ should be installed. Go environment is very simple to install : https://golang.org/doc/install
 
 To compile :
 
