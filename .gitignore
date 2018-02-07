@@ -1,0 +1,3 @@
+*.code-workspace
+.vscode
+json_encode
