@@ -12,7 +12,8 @@ import (
 
 var inputLines = make([]string, 0)
 
-func getInputLines() []string {
+// GetInputData gets data from stdin
+func GetInputData() string {
 	flag.Parse()
 	var data []byte
 	var err error
@@ -20,7 +21,12 @@ func getInputLines() []string {
 	if err != nil {
 		panic(err)
 	}
-	lines := strings.Split(string(data), "\n")
+	return string(data)
+}
+
+// ConvertInputToLines converts single input into separated elements
+func ConvertInputToLines(inputString string) []string {
+	lines := strings.Split(inputString, "\n")
 	for _, line := range lines {
 		if line != "" {
 			inputLines = append(inputLines, line)
@@ -29,19 +35,20 @@ func getInputLines() []string {
 	return inputLines
 }
 
-func printMapJSON(filenames []string) {
-	pagesJSON, err := json.Marshal(filenames)
+// ConvertSliceJSON converts input lines into JSON
+func ConvertSliceJSON(inputLines []string) []byte {
+	JSON, err := json.Marshal(inputLines)
 	if err != nil {
 		log.Fatal("Cannot encode to JSON ", err)
 	}
-	fmt.Fprintf(os.Stdout, "%s\n", pagesJSON)
+	return JSON
 }
 
 func main() {
 	switch flag.NArg() {
 	case 0:
-		inputLines := getInputLines()
-		printMapJSON(inputLines)
+		JSON := ConvertSliceJSON(ConvertInputToLines(GetInputData()))
+		fmt.Fprintf(os.Stdout, "%s\n", JSON)
 		break
 	default:
 		fmt.Printf("input must be from stdin\n")
