@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var inputLines []string
+var inputLines = make([]string, 0)
 
 func getInputLines() []string {
 	flag.Parse()
