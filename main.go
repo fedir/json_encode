@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-var inputLines = make(map[int]string)
+var inputLines []string
 
-func getInputLines() map[int]string {
+func getInputLines() []string {
 	flag.Parse()
 	var data []byte
 	var err error
@@ -21,15 +21,15 @@ func getInputLines() map[int]string {
 		panic(err)
 	}
 	lines := strings.Split(string(data), "\n")
-	for i, line := range lines {
+	for _, line := range lines {
 		if line != "" {
-			inputLines[i] = line
+			inputLines = append(inputLines, line)
 		}
 	}
 	return inputLines
 }
 
-func printMapJSON(filenames map[int]string) {
+func printMapJSON(filenames []string) {
 	pagesJSON, err := json.Marshal(filenames)
 	if err != nil {
 		log.Fatal("Cannot encode to JSON ", err)
