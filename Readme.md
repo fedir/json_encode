@@ -1,5 +1,7 @@
 # json_encode
 
+[![Build Status](https://travis-ci.org/fedir/json_encode.svg?branch=master)](https://travis-ci.org/fedir/json_encode)
+
 json_encode package pipes input into JSON for further processing.
 
 ## Installation
