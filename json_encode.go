@@ -24,7 +24,7 @@ func GetInputData() string {
 
 // ConvertInputToLines converts single input into separated elements
 func ConvertInputToLines(inputString string) []string {
-	var inputLines = make([]string, 0)
+	inputLines := make([]string, 0)
 	lines := strings.Split(inputString, "\n")
 	for _, line := range lines {
 		if line != "" {
