@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-var inputLines = make([]string, 0)
-
 // GetInputData gets data from stdin
 func GetInputData() string {
 	flag.Parse()
@@ -26,6 +24,7 @@ func GetInputData() string {
 
 // ConvertInputToLines converts single input into separated elements
 func ConvertInputToLines(inputString string) []string {
+	var inputLines = make([]string, 0)
 	lines := strings.Split(inputString, "\n")
 	for _, line := range lines {
 		if line != "" {
