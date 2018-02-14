@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+var (
+	useSimpleColumns = flag.Bool("sc", false, "Enable simple columns, lines will be splitted by defined separator")
+	separator        = flag.String("s", " ", "Separator for lines splitting")
+)
+
 // GetInputData gets data from stdin
 func GetInputData() string {
 	flag.Parse()
@@ -34,6 +39,17 @@ func ConvertInputToLines(inputString string) []string {
 	return inputLines
 }
 
+// ConvertLinesToTable converts single line into simple structure
+func ConvertLinesToTable(inputLines []string) [][]string {
+	linesWithColumns := make([][]string, 0)
+	for _, inputLine := range inputLines {
+		if inputLine != "" {
+			linesWithColumns = append(linesWithColumns, strings.Split(inputLine, *separator))
+		}
+	}
+	return linesWithColumns
+}
+
 // ConvertSliceJSON converts input lines into JSON
 func ConvertSliceJSON(inputLines []string) []byte {
 	JSON, err := json.Marshal(inputLines)
@@ -43,14 +59,23 @@ func ConvertSliceJSON(inputLines []string) []byte {
 	return JSON
 }
 
-func main() {
-	switch flag.NArg() {
-	case 0:
-		JSON := ConvertSliceJSON(ConvertInputToLines(GetInputData()))
-		fmt.Fprintf(os.Stdout, "%s\n", JSON)
-		break
-	default:
-		fmt.Printf("input must be from stdin\n")
-		os.Exit(1)
+// ConvertSliceJSON converts input lines into JSON
+func ConvertTableJSON(linesWithColumns [][]string) []byte {
+	JSON, err := json.Marshal(linesWithColumns)
+	if err != nil {
+		log.Fatal("Cannot encode to JSON ", err)
 	}
+	return JSON
+}
+
+func main() {
+	flag.Parse()
+	JSON := make([]byte, 0)
+	if *useSimpleColumns {
+		JSON = ConvertTableJSON(ConvertLinesToTable(ConvertInputToLines(GetInputData())))
+	} else {
+		JSON = ConvertSliceJSON(ConvertInputToLines(GetInputData()))
+	}
+
+	fmt.Fprintf(os.Stdout, "%s\n", JSON)
 }

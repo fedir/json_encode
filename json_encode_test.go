@@ -22,3 +22,13 @@ func TestStringsToJson(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestStringsToTable(t *testing.T) {
+	inputData := "A B C\nD E F"
+	JSON := string(ConvertTableJSON(ConvertLinesToTable(ConvertInputToLines(inputData))))
+	//fmt.Printf("%s", JSON)
+	expectedOutput := "[[\"A\",\"B\",\"C\"],[\"D\",\"E\",\"F\"]]"
+	if expectedOutput != JSON {
+		t.Fail()
+	}
+}

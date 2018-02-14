@@ -16,6 +16,14 @@ To compile :
 
 After You could put compiled `json_encode` in Your favourite bin folder.
 
+# Usage
+
+echo "Hello world" | ./json_encode
+
+Options:
+  -s string     Separator for lines splitting (default " ")
+  -sc           Enable simple columns, lines will be splitted by defined separator
+
 ## Use cases
 
     echo "Hello world" | ./json_encode
@@ -29,3 +37,9 @@ After You could put compiled `json_encode` in Your favourite bin folder.
 
     tail /var/log/apache2/access_log | ./json_encode
     ["127.0.0.1 - - [04/Nov/2017:00:40:50 +0100] \"GET / HTTP/1.1\" 304 -","127.0.0.1 - - [04/Nov/2017:00:40:51 +0100] \"GET / HTTP/1.1\" 304 -","127.0.0.1 - - [04/Nov/2017:00:40:51 +0100] \"GET / HTTP/1.1\" 304 -","127.0.0.1 - - [04/Nov/2017:00:40:52 +0100] \"GET / HTTP/1.1\" 304 -","127.0.0.1 - - [04/Nov/2017:00:40:52 +0100] \"GET / HTTP/1.1\" 304 -","127.0.0.1 - - [04/Nov/2017:00:40:53 +0100] \"GET / HTTP/1.1\" 304 -","127.0.0.1 - - [04/Nov/2017:00:40:5
+
+    echo -e "A B C\nD E F" | ./json_encode
+    ["A B C","D E F"]
+
+    echo -e "A B C\nD E F" | ./json_encode -sc -s " "
+    [["A","B","C"],["D","E","F"]]
