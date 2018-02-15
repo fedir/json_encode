@@ -9,7 +9,7 @@ import (
 
 func TestSeqToJSON(t *testing.T) {
 	inputRawData := []byte{0x31, 0xa, 0x32, 0xa, 0x33, 0xa, 0x34, 0xa, 0x35, 0xa, 0x36, 0xa, 0x37, 0xa, 0x38, 0xa, 0x39, 0xa, 0x31, 0x30, 0xa}
-	JSON := string(ConvertSliceJSON(ConvertInputToLines(string(inputRawData))))
+	JSON := string(ConvertToJSON(ConvertInputToLines(string(inputRawData))))
 	expectedOutput := "[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\",\"9\",\"10\"]"
 	if expectedOutput != JSON {
 		t.Fail()
@@ -18,7 +18,7 @@ func TestSeqToJSON(t *testing.T) {
 
 func TestStringsToJson(t *testing.T) {
 	inputData := "1 2 3\n4 5 6"
-	JSON := string(ConvertSliceJSON(ConvertInputToLines(inputData)))
+	JSON := string(ConvertToJSON(ConvertInputToLines(inputData)))
 	//fmt.Printf("%s", JSON)
 	expectedOutput := "[\"1 2 3\",\"4 5 6\"]"
 	if expectedOutput != JSON {
@@ -28,7 +28,7 @@ func TestStringsToJson(t *testing.T) {
 
 func TestStringsToTable(t *testing.T) {
 	inputData := "A B C\nD E F"
-	JSON := string(ConvertTableJSON(ConvertLinesToTable(ConvertInputToLines(inputData))))
+	JSON := string(ConvertToJSON(ConvertLinesToTable(ConvertInputToLines(inputData))))
 	//fmt.Printf("%s", JSON)
 	expectedOutput := "[[\"A\",\"B\",\"C\"],[\"D\",\"E\",\"F\"]]"
 	if expectedOutput != JSON {

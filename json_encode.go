@@ -53,18 +53,9 @@ func ConvertLinesToTable(inputLines []string) [][]string {
 	return linesWithColumns
 }
 
-// ConvertSliceJSON converts input lines into JSON
-func ConvertSliceJSON(inputLines []string) []byte {
-	JSON, err := json.Marshal(inputLines)
-	if err != nil {
-		log.Fatal("Cannot encode to JSON ", err)
-	}
-	return JSON
-}
-
-// ConvertSliceJSON converts input lines into JSON
-func ConvertTableJSON(linesWithColumns [][]string) []byte {
-	JSON, err := json.Marshal(linesWithColumns)
+// ConvertToJSON converts input lines into JSON
+func ConvertToJSON(v interface{}) []byte {
+	JSON, err := json.Marshal(v)
 	if err != nil {
 		log.Fatal("Cannot encode to JSON ", err)
 	}
@@ -75,9 +66,9 @@ func main() {
 	flag.Parse()
 	JSON := make([]byte, 0)
 	if *useSimpleColumns {
-		JSON = ConvertTableJSON(ConvertLinesToTable(ConvertInputToLines(GetInputData())))
+		JSON = ConvertToJSON(ConvertLinesToTable(ConvertInputToLines(GetInputData())))
 	} else {
-		JSON = ConvertSliceJSON(ConvertInputToLines(GetInputData()))
+		JSON = ConvertToJSON(ConvertInputToLines(GetInputData()))
 	}
 
 	fmt.Fprintf(os.Stdout, "%s\n", JSON)
