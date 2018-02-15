@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/fedir/json_encode.svg?branch=master)](https://travis-ci.org/fedir/json_encode)
 [![Code Coverage](https://codecov.io/gh/fedir/json_encode/branch/master/graph/badge.svg)](https://codecov.io/gh/fedir/json_encode)
-[![Go Report Card](https://goreportcard.com/badge/github.com/fedir/json_encode)](https://goreportcard.com/report/github.com/fedir/json_encode) 
+[![Go Report Card](https://goreportcard.com/badge/github.com/fedir/json_encode)](https://goreportcard.com/report/github.com/fedir/json_encode)
 [![GoDoc](https://godoc.org/github.com/fedir/json_encode?status.svg)](https://godoc.org/github.com/fedir/json_encode)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
