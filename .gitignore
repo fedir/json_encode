@@ -1,3 +1,4 @@
 *.code-workspace
 .vscode
 json_encode
+coverage.txt
