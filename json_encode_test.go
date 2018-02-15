@@ -45,3 +45,7 @@ func TestConvertInputToLines(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestMainProgram(t *testing.T) {
+	main()
+}
