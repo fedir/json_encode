@@ -16,7 +16,7 @@ To compile :
 
 After You could put compiled `json_encode` in Your favourite bin folder.
 
-# Usage
+## Usage
 
 echo "Hello world" | ./json_encode
 
