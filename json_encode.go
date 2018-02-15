@@ -20,7 +20,6 @@ var (
 
 // GetInputData gets data from stdin
 func GetInputData() string {
-	flag.Parse()
 	var data []byte
 	var err error
 	data, err = ioutil.ReadAll(os.Stdin)
