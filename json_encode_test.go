@@ -21,7 +21,6 @@ func TestSeqToJSON(t *testing.T) {
 func TestStringsToJson(t *testing.T) {
 	inputData := "1 2 3\n4 5 6"
 	JSON := string(ConvertToJSON(ConvertInputToLines(inputData)))
-	//fmt.Printf("%s", JSON)
 	expectedOutput := "[\"1 2 3\",\"4 5 6\"]"
 	if expectedOutput != JSON {
 		t.Fail()
@@ -31,7 +30,6 @@ func TestStringsToJson(t *testing.T) {
 func TestStringsToTable(t *testing.T) {
 	inputData := "A B C\nD E F"
 	JSON := string(ConvertToJSON(ConvertLinesToTable(ConvertInputToLines(inputData))))
-	//fmt.Printf("%s", JSON)
 	expectedOutput := "[[\"A\",\"B\",\"C\"],[\"D\",\"E\",\"F\"]]"
 	if expectedOutput != JSON {
 		t.Fail()
