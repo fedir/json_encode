@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -32,6 +33,15 @@ func TestStringsToTable(t *testing.T) {
 	//fmt.Printf("%s", JSON)
 	expectedOutput := "[[\"A\",\"B\",\"C\"],[\"D\",\"E\",\"F\"]]"
 	if expectedOutput != JSON {
+		t.Fail()
+	}
+}
+
+func TestConvertInputToLines(t *testing.T) {
+	inputData := "1\n2\n3"
+	convertedData := fmt.Sprintf("%v", ConvertInputToLines(inputData))
+	expectedOutput := fmt.Sprintf("%v", []string{"1", "2", "3"})
+	if expectedOutput != convertedData {
 		t.Fail()
 	}
 }
