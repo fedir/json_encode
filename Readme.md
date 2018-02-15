@@ -18,7 +18,7 @@ After You could put compiled `json_encode` in Your favourite bin folder.
 
 ## Usage
 
-echo "Hello world" | ./json_encode
+    echo "Hello world" | ./json_encode
 
 Options:
   -s string     Separator for lines splitting (default " ")
