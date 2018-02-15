@@ -19,10 +19,10 @@ After You could put compiled `json_encode` in Your favourite bin folder.
 ## Usage
 
     echo "Hello world" | ./json_encode
+### Options
 
-Options:
-  -s string     Separator for lines splitting (default " ")
-  -sc           Enable simple columns, lines will be splitted by defined separator
+    -s string     Separator for lines splitting (default " ")
+    -sc           Enable simple columns, lines will be splitted by defined separator
 
 ## Use cases
 
