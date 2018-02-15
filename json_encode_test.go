@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -47,5 +48,10 @@ func TestConvertInputToLines(t *testing.T) {
 }
 
 func TestMainProgram(t *testing.T) {
+	main()
+}
+
+func TestMainProgramWithSimpleColumns(t *testing.T) {
+	os.Args = []string{"-sc"}
 	main()
 }
