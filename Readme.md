@@ -24,6 +24,7 @@ After You could put compiled `json_encode` in Your favourite bin folder.
 
     -s string     Separator for lines splitting (default " ")
     -sc           Enable simple columns, lines will be splitted by defined separator
+    -p            Pretty-printing
 
 ## Usage examples
 
@@ -49,5 +50,24 @@ Apache logs
 
 Git log, transformed into an array of records with separated columns
 
-    git log --date=local --pretty=format:"%h|%an|%ad|%s" -n 3 | ./json_encode -sc -s "|"
-    [["6b50dbb","Fedir RYKHTIK","Fri Feb 16 00:21:31 2018","Cleaning from comments for better readability"],["6221afb","Fedir RYKHTIK","Fri Feb 16 00:20:20 2018","TestMainProgramWithSimpleColumns"],["4f3bf57","Fedir RYKHTIK","Fri Feb 16 00:15:59 2018","Testing the whole program"]]
+    $ git log --date=local --pretty=format:"%h|%an|%ad|%s" -n 3 | ./json_encode -sc -s "|" -p
+    [
+        [
+            "25696c2",
+            "Fedir RYKHTIK",
+            "Fri Feb 16 00:34:01 2018",
+            "Advanced examples"
+        ],
+        [
+            "6b50dbb",
+            "Fedir RYKHTIK",
+            "Fri Feb 16 00:21:31 2018",
+            "Cleaning from comments for better readability"
+        ],
+        [
+            "6221afb",
+            "Fedir RYKHTIK",
+            "Fri Feb 16 00:20:20 2018",
+            "TestMainProgramWithSimpleColumns"
+        ]
+    ]

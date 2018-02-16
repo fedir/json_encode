@@ -16,6 +16,7 @@ import (
 var (
 	useSimpleColumns = flag.Bool("sc", false, "Enable simple columns, lines will be splitted by defined separator")
 	separator        = flag.String("s", " ", "Separator for lines splitting")
+	printPretty      = flag.Bool("p", false, "Pretty-printing")
 )
 
 // GetInputData gets data from stdin
@@ -54,7 +55,13 @@ func ConvertLinesToTable(inputLines []string) [][]string {
 
 // ConvertToJSON converts input lines into JSON
 func ConvertToJSON(v interface{}) []byte {
-	JSON, err := json.Marshal(v)
+	var err error
+	var JSON []byte
+	if *printPretty {
+		JSON, err = json.MarshalIndent(v, "", "  ")
+	} else {
+		JSON, err = json.Marshal(v)
+	}
 	if err != nil {
 		log.Fatal("Cannot encode to JSON ", err)
 	}
