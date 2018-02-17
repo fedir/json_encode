@@ -8,7 +8,7 @@
 
 JSON encoder for Shell is designed to transform data from different sources into JSON format for further processing.
 
-Could be useful for syadmins, devops and developers for data collection, exchange and unification (ELK, custom dashobards).
+Could be useful for syadmins, devops and developers for data collection, exchange and unification (ELK, custom dashboards ...).
 
 ## Installation
 
