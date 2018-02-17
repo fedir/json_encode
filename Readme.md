@@ -1,4 +1,4 @@
-# json_encode
+# json_encode for shell
 
 [![Build Status](https://travis-ci.org/fedir/json_encode.svg?branch=master)](https://travis-ci.org/fedir/json_encode)
 [![Code Coverage](https://codecov.io/gh/fedir/json_encode/branch/master/graph/badge.svg)](https://codecov.io/gh/fedir/json_encode)
@@ -6,7 +6,9 @@
 [![GoDoc](https://godoc.org/github.com/fedir/json_encode?status.svg)](https://godoc.org/github.com/fedir/json_encode)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-json_encode package pipes input into JSON for further processing.
+JSON encoder for Shell is designed to transform data from different sources into JSON format for further processing.
+
+Could be useful for syadmins, devops and developers for data collection, exchange and unification (ELK, custom dashobards).
 
 ## Installation
 
