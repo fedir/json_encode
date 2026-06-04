@@ -227,6 +227,82 @@ df -h --output=source,pcent | tail -n +2 | tr -d ' %' \
 "/dev/sda1"
 ```
 
+### Processes as typed objects for a metrics pipeline
+
+`-w` collapses the padded columns (no `tr -s`), `-cols` names them, `-t` turns the
+numerics into real numbers, and `-nd` emits one object per line — ready to pipe
+straight into Elasticsearch `_bulk`, Loki, Vector or Fluent Bit.
+
+```bash
+ps -eo pid,comm,pcpu,rss --no-headers \
+  | json_encode -sc -w -cols pid,comm,cpu,rss_kb -t -nd
+{"comm":"systemd","cpu":0,"pid":1,"rss_kb":12344}
+{"comm":"sshd","cpu":0.1,"pid":512,"rss_kb":4096}
+```
+
+### `docker ps` straight to objects — no `jq` needed
+
+A header row plus `-tsv` gives you self-describing records in one step.
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' \
+  | json_encode -tsv -header
+[{"IMAGE":"nginx:latest","NAMES":"web","STATUS":"Up 2 hours"},
+ {"IMAGE":"redis:7","NAMES":"cache","STATUS":"Up 5 days"}]
+```
+
+### Numeric thresholds without `tonumber`
+
+With `-t`, values arrive as real numbers, so `jq` comparisons just work:
+
+```bash
+df -h --output=source,pcent | tail -n +2 | tr -d ' %' \
+  | json_encode -kv -t \
+  | jq -c 'to_entries | map(select(.value > 80)) | map(.key)'
+["/dev/sda1","/dev/sdc1"]
+```
+
+### Project columns without `cut`
+
+`-f` picks fields by 1-based index, and pairs with `-cols` to name them — replacing
+a `cut`/`awk` pre-stage:
+
+```bash
+# user, uid and shell from /etc/passwd, as named objects
+json_encode -s : -f 1,3,7 -cols user,uid,shell /etc/passwd
+[{"shell":"/bin/bash","uid":"0","user":"root"},...]
+```
+
+### Parse a CSV report and query it
+
+File arguments and proper CSV parsing (quoted fields honoured) let you treat a
+report like a tiny database:
+
+```bash
+json_encode -csv -header costs.csv \
+  | jq '.[] | select(.service=="EC2") | .cost'
+"42.50"
+```
+
+### Inventory files safely with `find -print0`
+
+`-0` reads NUL-delimited input, so paths with spaces or newlines survive intact:
+
+```bash
+find /var/log -name '*.log' -print0 | json_encode -0
+["/var/log/sys log.1","/var/log/nginx/access.log",...]
+```
+
+### Stamp a snapshot with host and timestamp
+
+`-o` wraps the output with `host` and a UTC `timestamp` — a self-contained audit
+record you can drop into an API or object store:
+
+```bash
+rpm -qa | sort | json_encode -o
+{"data":["acl-2.3.1","bash-5.2.15",...],"host":"web01","timestamp":"2026-06-04T21:00:00Z"}
+```
+
 ### Ship access.log to Loki
 
 Loki's push API expects `{"streams":[{"stream":{labels},"values":[["timestamp_ns","line"],...]}]}`.
