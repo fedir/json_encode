@@ -1,7 +1,6 @@
 # json_encode for shell
 
-[![Build Status](https://travis-ci.org/fedir/json_encode.svg?branch=master)](https://travis-ci.org/fedir/json_encode)
-[![Code Coverage](https://codecov.io/gh/fedir/json_encode/branch/master/graph/badge.svg)](https://codecov.io/gh/fedir/json_encode)
+[![CI](https://github.com/fedir/json_encode/actions/workflows/ci.yml/badge.svg)](https://github.com/fedir/json_encode/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fedir/json_encode)](https://goreportcard.com/report/github.com/fedir/json_encode)
 [![GoDoc](https://godoc.org/github.com/fedir/json_encode?status.svg)](https://godoc.org/github.com/fedir/json_encode)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -12,26 +11,52 @@ Useful for sysadmins, DevOps, and developers who need to feed shell data into AP
 
 ## Installation
 
+**Go install** (requires Go 1.16+):
+
+```bash
+go install github.com/fedir/json_encode@latest
+```
+
+**Homebrew:**
+
+```bash
+brew install fedir/tap/json_encode
+```
+
+**Pre-built binaries** — grab one for your OS/arch from the
+[releases page](https://github.com/fedir/json_encode/releases).
+
+**From source:**
+
 ```bash
 git clone https://github.com/fedir/json_encode.git
 cd json_encode
 make build
-# copy to your PATH
 cp json_encode /usr/local/bin/
 ```
-
-Requires Go 1.16+.
 
 ## Arguments
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-s` | `" "` | Separator used to split each line into columns |
+| `-s` | `" "` | Separator used to split each line into fields |
 | `-sc` | off | Column mode — split each line into an array of fields |
 | `-kv` | off | Key-value mode — first field becomes the key, remainder becomes the value |
+| `-cols` | — | Comma-separated column names — emit an **array of objects** |
+| `-header` | off | Use the first input line as the object keys |
+| `-t` | off | Infer numbers, booleans and `null` instead of quoting everything as strings |
+| `-w` | off | Split on **runs of whitespace** (awk-style) — ignores `-s` |
+| `-f` | — | Select fields by 1-based index, e.g. `-f 1,3,6` |
+| `-csv` / `-tsv` | off | Parse input as CSV/TSV, honouring quoted fields |
+| `-0` | off | Split input on NUL bytes (pairs with `find -print0`) |
+| `-nd` | off | Emit newline-delimited JSON (one value per line) |
+| `-stream` | off | Stream line-by-line; emit each line as it arrives (works with `tail -f`) |
+| `-o` | off | Wrap output in an object with `host`, `timestamp` and `data` |
 | `-p` | off | Pretty-print the JSON output |
+| `-version` | — | Print version and exit |
 
-Modes are mutually exclusive: `-kv` takes priority over `-sc`; without either, each line becomes a string element.
+**Mode precedence:** `-kv` → `-cols`/`-header` (objects) → `-sc`/`-csv`/`-tsv` (columns) → lines.
+Input comes from stdin, or from file arguments if given: `json_encode FILE...`.
 
 ## Basic usage
 
@@ -54,6 +79,33 @@ echo -e "alice 30\nbob 25" | json_encode -sc
 ```bash
 echo -e "host db.internal\nport 5432" | json_encode -kv
 {"host":"db.internal","port":"5432"}
+```
+
+**Named columns → array of objects** (`-cols` / `-header`)
+
+```bash
+echo -e "alice 30\nbob 25" | json_encode -sc -cols name,age
+[{"age":"30","name":"alice"},{"age":"25","name":"bob"}]
+
+# or let the data name itself from a header row (+ -w to handle padded columns)
+ps -eo pid,comm | json_encode -header -w
+[{"COMMAND":"systemd","PID":"1"},{"COMMAND":"sshd","PID":"512"},...]
+```
+
+**Real numbers and booleans** (`-t`)
+
+```bash
+echo -e "status 200\ncached true" | json_encode -kv -t
+{"cached":true,"status":200}
+```
+
+**Newline-delimited JSON for log shippers** (`-nd`)
+
+```bash
+echo -e "a\nb\nc" | json_encode -nd
+"a"
+"b"
+"c"
 ```
 
 **Custom separator**
@@ -210,14 +262,17 @@ tail -n 500 /var/log/nginx/access.log \
 
 **Tail in real time — ship each new line as it arrives:**
 
+`-stream` emits one JSON value per line the moment it appears (no `while read`
+loop, no waiting for EOF):
+
 ```bash
 tail -f /var/log/nginx/access.log \
+  | json_encode -stream -nd \
   | while IFS= read -r line; do
-      printf '%s\n' "$line" \
-        | json_encode \
+      printf '%s' "$line" \
         | jq -c --arg host "$(hostname)" \
             '{streams:[{stream:{job:"nginx",host:$host},
-                        values:[[(now*1e9|tostring), .[0]]]}]}' \
+                        values:[[(now*1e9|tostring), .]]}]}' \
         | curl -s -X POST http://loki:3100/loki/api/v1/push \
               -H 'Content-Type: application/json' -d @-
     done

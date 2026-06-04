@@ -1,7 +1,9 @@
 BINARY=json_encode
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS = -ldflags "-X main.version=$(VERSION)"
 
 build:
-	go build -o $(BINARY) .
+	go build $(LDFLAGS) -o $(BINARY) .
 
 test:
 	go test -race ./...
@@ -104,7 +106,43 @@ functional-test: build
 	echo "$$out" | jq -e '.streams[0].values[0][1] | contains("DELETE")' > /dev/null && \
 	echo "PASS: loki single-line payload" || (echo "FAIL: loki single-line payload"; exit 1)
 
+	# objects: -cols names produce an array of objects
+	printf "a 1\nb 2\n" | ./$(BINARY) -sc -cols k,v | grep -qxF '[{"k":"a","v":"1"},{"k":"b","v":"2"}]' && echo "PASS: objects -cols" || (echo "FAIL: objects -cols"; exit 1)
+	# objects: -header consumes the first line as keys, -w handles padded columns
+	printf "NAME PID\nnginx 12\n" | ./$(BINARY) -header -w | grep -qxF '[{"NAME":"nginx","PID":"12"}]' && echo "PASS: objects -header" || (echo "FAIL: objects -header"; exit 1)
+	# type inference: numbers and booleans become real JSON scalars
+	printf "x 200\nz true\n" | ./$(BINARY) -kv -t | grep -qxF '{"x":200,"z":true}' && echo "PASS: type inference" || (echo "FAIL: type inference"; exit 1)
+	# ndjson: one JSON value per line, no enclosing array
+	out=$$(printf "a\nb\n" | ./$(BINARY) -nd); \
+	[ "$$(printf '%s\n' "$$out" | wc -l | tr -d ' ')" = "2" ] && \
+	printf '%s\n' "$$out" | grep -qxF '"a"' && \
+	printf '%s\n' "$$out" | grep -qxF '"b"' && \
+	echo "PASS: ndjson" || (echo "FAIL: ndjson"; exit 1)
+	# whitespace split: runs of spaces collapse like awk (no `tr -s` needed)
+	printf "  1   systemd   0.0\n" | ./$(BINARY) -sc -w | grep -qxF '[["1","systemd","0.0"]]' && echo "PASS: whitespace split" || (echo "FAIL: whitespace split"; exit 1)
+	# field selection: pick 1-based columns after splitting
+	printf "root:0:root\n" | ./$(BINARY) -sc -s : -f 1,3 | grep -qxF '[["root","root"]]' && echo "PASS: field selection" || (echo "FAIL: field selection"; exit 1)
+	# csv: quoted field containing the separator stays intact
+	printf '"Smith, John",42\n' | ./$(BINARY) -csv | grep -qxF '[["Smith, John","42"]]' && echo "PASS: csv quoted" || (echo "FAIL: csv quoted"; exit 1)
+	# tsv: tab-separated parsing
+	printf 'a\tb\n' | ./$(BINARY) -tsv | grep -qxF '[["a","b"]]' && echo "PASS: tsv" || (echo "FAIL: tsv"; exit 1)
+	# NUL-delimited input: pairs with find -print0, survives spaces
+	printf 'a b\0c d\0' | ./$(BINARY) -0 | grep -qxF '["a b","c d"]' && echo "PASS: nul-delimited" || (echo "FAIL: nul-delimited"; exit 1)
+	# streaming: emits one JSON value per line (works with tail -f)
+	printf 'one\ntwo\n' | ./$(BINARY) -stream -nd | grep -qxF '"two"' && echo "PASS: stream ndjson" || (echo "FAIL: stream ndjson"; exit 1)
+	# wrap: -o attaches host/timestamp metadata around the data
+	printf 'a\n' | ./$(BINARY) -o | jq -e '.data == ["a"] and has("host") and has("timestamp")' > /dev/null && echo "PASS: wrap object" || (echo "FAIL: wrap object"; exit 1)
+	# version: prints the embedded build version
+	./$(BINARY) -version | grep -qF 'json_encode' && echo "PASS: version" || (echo "FAIL: version"; exit 1)
+
+release:
+	goreleaser release --clean
+
+snapshot:
+	goreleaser release --snapshot --clean
+
 clean:
 	rm -f $(BINARY) coverage.out
+	rm -rf dist
 
-.PHONY: build test vet clean functional-test
+.PHONY: build test vet clean functional-test release snapshot
