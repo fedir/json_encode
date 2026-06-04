@@ -1,3 +1,7 @@
+# Use bash so $'\t' (ANSI-C quoting) works; on Ubuntu CI /bin/sh is dash, which
+# does not support it and would pass a literal "$\t" as the separator.
+SHELL := /bin/bash
+
 BINARY=json_encode
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS = -ldflags "-X main.version=$(VERSION)"
