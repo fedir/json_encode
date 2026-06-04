@@ -12,6 +12,8 @@ monitoring systems, ELK, dashboards or `jq` pipelines. It tries to **just work**
 numbers become numbers, whitespace columns split themselves, and output is
 pretty-printed and colorized on a terminal but compact when piped.
 
+![json_encode in action](demo/json_encode.gif)
+
 ```bash
 $ printf 'host db.internal\nport 5432\n' | json_encode -k
 {
