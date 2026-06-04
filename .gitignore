@@ -2,3 +2,5 @@
 .vscode
 json_encode
 coverage.txt
+coverage.out
+dist/
