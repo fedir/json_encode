@@ -33,53 +33,64 @@ yields `dev`.
 
 ## Flags
 
+GNU-style: every flag has a short and a long form. Stdlib `flag` only, so `--long`
+works but short-flag bundling (`-cp`) does not.
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-s`  | `" "` | Separator for splitting lines into fields |
-| `-sc` | off   | Column mode — split each line into an array of fields |
-| `-kv` | off   | Key-value mode — first field is key, remainder is value |
-| `-cols` | —   | Comma-separated column names → array of objects |
-| `-header` | off | Use the first input line as object keys |
-| `-t`  | off   | Infer numbers / booleans / null instead of strings |
-| `-w`  | off   | Split on runs of whitespace (awk-style); ignores `-s` |
-| `-f`  | —     | Select 1-based field indices, e.g. `1,3,6` |
-| `-csv` / `-tsv` | off | Parse input as CSV/TSV (quoted fields honoured) |
-| `-0`  | off   | Split input on NUL instead of newline |
-| `-nd` | off   | Newline-delimited JSON (one value per line) |
-| `-stream` | off | Stream line-by-line; emit per line (works with `tail -f`) |
-| `-o`  | off   | Wrap output in `{host,timestamp,data}` |
-| `-p`  | off   | Pretty-print output |
-| `-version` / `-v` | — | Print version and exit |
+| `-c, --columns` | off | Split each line into fields → array of arrays |
+| `-n, --names A,B` | — | Split, emit array of objects with these keys |
+| `-H, --header` | off | Split; first row supplies the object keys |
+| `-k, --kv` | off | Object `{first field: remainder}` |
+| `--csv` / `--tsv` | off | Parse as CSV/TSV (quoted fields honoured) |
+| `-d, --delimiter STR` | whitespace | Field separator; default splits on runs of whitespace |
+| `-f, --fields LIST` | — | Keep 1-based fields; ranges allowed, e.g. `1-3,7` |
+| `-0, --null` | off | Read NUL-delimited input |
+| `-p, --pretty` / `--compact` | auto | Force pretty / compact (auto = pretty on a TTY) |
+| `--color MODE` | auto | `auto` / `always` / `never` (`--no-color` alias); auto = color on a TTY, honours `NO_COLOR` |
+| `--raw` | off | Keep every value a string (disable type inference) |
+| `-l, --jsonl` | off | Newline-delimited JSON (one value per line) |
+| `-F, --follow` | off | Stream line-by-line (`tail -f`) |
+| `-o, --output FILE` | stdout | Write to FILE |
+| `--wrap` | off | Wrap output in `{host,timestamp,data}` |
+| `-V, --version` / `-h, --help` | — | Version / help |
 
-**Mode precedence:** `-kv` → `-cols`/`-header` (objects) → `-sc`/`-csv`/`-tsv`
-(columns) → lines. Input is stdin, or file arguments when given.
+**Defaults that matter:** type inference is **on** (round-trip-safe; `--raw` to
+disable), the split delimiter defaults to **whitespace runs**, and output is
+**TTY-aware** (pretty+color interactively, compact when piped).
+
+**Mode precedence:** `-k` → `-H`/`-n` (objects) → `-c`/`--csv`/`--tsv` (columns) →
+lines. Input is stdin, or file arguments when given (`.csv`/`.tsv` auto-detected).
 
 ## Architecture
 
 Single-package `main`, standard library only. All logic lives in `json_encode.go`.
 
-Two top-level paths from `main()`:
-- **batch** (`runBatch`) — reads all input, builds one value, emits via `output()`.
-- **stream** (`runStream`, `-stream`) — `bufio.Scanner` loop, marshals and flushes
-  one value per line so it works with never-ending pipes like `tail -f`.
+Entry chain (testable — no globals, streams injected):
+- `main()` → `realMain(args, stdin, stdout, stderr) int`
+- `parseArgs(args)` builds a fresh `flag.NewFlagSet`, registering each flag twice
+  (short+long) into a `config` struct; returns `flag.ErrHelp` for `-h`.
+- `realMain` handles help/version/parse errors, then calls
+  `run(cfg, stdin, stdout, stderr) int`.
+- `run` does batch; `runStream` (`-F`) is the `bufio.Scanner` per-line path.
 
-Pipeline helpers:
-- `readInput()` — stdin, or file args from `flag.Args()`
-- `splitRecords()` — splits on `\n` or NUL (`-0`), drops empty records, trims `\r`
-- `splitFields()` — `strings.Fields` (`-w`) or `strings.Split` on `-s`; `readCSVRows()`
-  uses `encoding/csv` for `-csv`/`-tsv`
-- `selectFields()` / `parseFieldSpec()` — `-f` 1-based projection
-- `coerce()` — `-t` type inference (rejects Inf/NaN so JSON stays valid)
-- `resolveMode()` — maps flags to `modeLines/Columns/Objects/KeyValue`
-- `buildLines/buildTable/buildObjects/buildKeyValue` — shape builders
-- `output()` — applies `-o` wrap and `-nd`, else `ConvertToJSON` (`-p` indent)
+Pipeline helpers (most reused from v2):
+- `readInput()` — stdin or file args; `detectFormat()` auto-detects `.csv`/`.tsv`
+- `splitRecords()` — splits on `\n` or NUL (`-0`), drops empties, trims `\r`
+- `config.splitFields()` / `config.splitKV()` — whitespace by default,
+  `strings.Split` when `-d` given; `readCSVRows()` for CSV/TSV
+- `selectFields()` / `parseFieldSpec()` — `-f` projection with range expansion
+- `coerce(s, raw)` — round-trip-safe type inference (`FormatInt/FormatFloat == s`,
+  exact `true/false/null`; rejects Inf/NaN, leading zeros, non-canonical floats)
+- `resolveMode()` → `modeLines/Columns/Objects/KeyValue`
+- `buildLines/buildTable/buildObjects/buildKeyValue` — shape builders (take a `coerceFn`)
+- output: `emit()` applies `--wrap` and `-l`; `usePretty`/`useColor` resolve the
+  TTY-aware defaults (`isTerminal` via `os.ModeCharDevice`); `writeValue` uses
+  stdlib `json.Marshal`/`MarshalIndent` when color is off, else `encodeColored`
+  (a small ANSI colorizer over our value types, keys sorted for determinism).
 
-Legacy exported functions (`GetInputData`, `ConvertInputToLines`,
-`ConvertLinesToTable`, `ConvertLinesToKeyValue`, `ConvertToJSON`) are retained
-because the unit tests call them directly — keep them working.
-
-Tests are in `json_encode_test.go` (unit) and `Makefile` `functional-test` target
-(shell integration).
+Tests are in `json_encode_test.go` (table-driven, via `realMain` with in-memory
+streams) and the `Makefile` `functional-test` target (shell integration).
 
 ## Releasing
 
@@ -92,7 +103,7 @@ amd64/arm64) and pushes a Homebrew formula to `fedir/homebrew-tap`. CI lives in
 ## Testing strategy
 
 - **Unit tests** (`json_encode_test.go`) — cover pure Go functions in isolation
-- **Functional tests** (`make functional-test`) — shell pipelines that exercise the compiled binary end-to-end; grouped by topic: basic, sysadmin, key-value, Loki
+- **Functional tests** (`make functional-test`) — shell pipelines that exercise the compiled binary end-to-end; grouped by topic: basic, sysadmin, key-value, v3 UX (objects, typing, jsonl, color, output), Loki. Expected outputs assume type inference is on (e.g. `200` is a number).
 - **Loki tests** do not require a running Loki instance; they validate the JSON payload shape using `jq -e` assertions (structure, field values, array lengths). `curl` is never called in tests.
 - `jq` must be available on the test machine (`brew install jq` / `apt install jq`)
 

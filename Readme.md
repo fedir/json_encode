@@ -7,7 +7,20 @@
 
 Turn any shell output into JSON — one pipe away.
 
-Useful for sysadmins, DevOps, and developers who need to feed shell data into APIs, monitoring systems, ELK, dashboards, or `jq` pipelines.
+Built for sysadmins, DevOps and developers who need to feed shell data into APIs,
+monitoring systems, ELK, dashboards or `jq` pipelines. It tries to **just work**:
+numbers become numbers, whitespace columns split themselves, and output is
+pretty-printed and colorized on a terminal but compact when piped.
+
+```bash
+$ printf 'host db.internal\nport 5432\n' | json_encode -k
+{
+  "host": "db.internal",
+  "port": 5432
+}
+$ printf 'host db.internal\nport 5432\n' | json_encode -k | cat
+{"host":"db.internal","port":5432}
+```
 
 ## Installation
 
@@ -37,94 +50,119 @@ cp json_encode /usr/local/bin/
 
 ## Arguments
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-s` | `" "` | Separator used to split each line into fields |
-| `-sc` | off | Column mode — split each line into an array of fields |
-| `-kv` | off | Key-value mode — first field becomes the key, remainder becomes the value |
-| `-cols` | — | Comma-separated column names — emit an **array of objects** |
-| `-header` | off | Use the first input line as the object keys |
-| `-t` | off | Infer numbers, booleans and `null` instead of quoting everything as strings |
-| `-w` | off | Split on **runs of whitespace** (awk-style) — ignores `-s` |
-| `-f` | — | Select fields by 1-based index, e.g. `-f 1,3,6` |
-| `-csv` / `-tsv` | off | Parse input as CSV/TSV, honouring quoted fields |
-| `-0` | off | Split input on NUL bytes (pairs with `find -print0`) |
-| `-nd` | off | Emit newline-delimited JSON (one value per line) |
-| `-stream` | off | Stream line-by-line; emit each line as it arrives (works with `tail -f`) |
-| `-o` | off | Wrap output in an object with `host`, `timestamp` and `data` |
-| `-p` | off | Pretty-print the JSON output |
-| `-version` | — | Print version and exit |
+Every flag has a short and a long form. With no file arguments, input is read from
+stdin.
 
-**Mode precedence:** `-kv` → `-cols`/`-header` (objects) → `-sc`/`-csv`/`-tsv` (columns) → lines.
-Input comes from stdin, or from file arguments if given: `json_encode FILE...`.
+| Flag | Description |
+|------|-------------|
+| `-c, --columns` | Split each line into fields → **array of arrays** |
+| `-n, --names a,b,c` | Split and emit an **array of objects** with these keys |
+| `-H, --header` | Split; the **first row supplies the keys** |
+| `-k, --kv` | **Object** `{first field: remainder}` |
+| `--csv` / `--tsv` | Parse as CSV/TSV (quoted fields honoured); with `-H` → objects |
+| `-d, --delimiter STR` | Field separator (default: **runs of whitespace**, awk-style) |
+| `-f, --fields LIST` | Keep 1-based fields; supports ranges, e.g. `1-3,7` |
+| `-0, --null` | Read NUL-delimited input (`find -print0`) |
+| `-p, --pretty` | Force pretty (multi-line) |
+| `--compact` | Force compact (single line) |
+| `--color MODE` | `auto` (default) / `always` / `never` (also `--no-color`) |
+| `--raw` | Keep every value a string (disable type inference) |
+| `-l, --jsonl` | Newline-delimited JSON, one value per line |
+| `-F, --follow` | Stream line-by-line as input arrives (`tail -f`) |
+| `-o, --output FILE` | Write to FILE instead of stdout |
+| `--wrap` | Wrap output in `{host, timestamp, data}` |
+| `-V, --version` | Print version and exit |
+| `-h, --help` | Show help |
+
+**Smart defaults:**
+
+- **Type inference is on.** Values that round-trip exactly become real JSON
+  numbers / booleans / `null`; anything ambiguous stays a string, so leading-zero
+  IDs (`007`), versions (`1.2.3`), IPs and times are preserved. Use `--raw` to keep
+  everything as strings.
+- **Splitting defaults to whitespace runs** (awk-style), so `ps`/`df`/`free` output
+  needs no `tr -s`. Pass `-d` for a literal delimiter.
+- **Output adapts to the terminal:** pretty + color when stdout is a TTY, compact
+  and uncolored when piped or redirected. Override with `-p`, `--compact`, `--color`.
+
+**Mode precedence:** `-k` → `-H`/`-n` (objects) → `-c`/`--csv`/`--tsv` (columns) → lines.
 
 ## Basic usage
 
-**Lines → JSON array**
+**Lines → JSON array** (numbers are typed)
 
 ```bash
 seq 1 5 | json_encode
-["1","2","3","4","5"]
+[1,2,3,4,5]
 ```
 
-**Columns → array of arrays** (`-sc`)
+**Columns → array of arrays** (`-c`, whitespace split by default)
 
 ```bash
-echo -e "alice 30\nbob 25" | json_encode -sc
-[["alice","30"],["bob","25"]]
+echo -e "alice 30\nbob 25" | json_encode -c
+[["alice",30],["bob",25]]
 ```
 
-**Key-value → JSON object** (`-kv`)
+**Key-value → JSON object** (`-k`)
 
 ```bash
-echo -e "host db.internal\nport 5432" | json_encode -kv
-{"host":"db.internal","port":"5432"}
+echo -e "host db.internal\nport 5432" | json_encode -k
+{"host":"db.internal","port":5432}
 ```
 
-**Named columns → array of objects** (`-cols` / `-header`)
+**Named columns → array of objects** (`-n` / `-H`)
 
 ```bash
-echo -e "alice 30\nbob 25" | json_encode -sc -cols name,age
-[{"age":"30","name":"alice"},{"age":"25","name":"bob"}]
+echo -e "alice 30\nbob 25" | json_encode -n name,age
+[{"age":30,"name":"alice"},{"age":25,"name":"bob"}]
 
-# or let the data name itself from a header row (+ -w to handle padded columns)
-ps -eo pid,comm | json_encode -header -w
-[{"COMMAND":"systemd","PID":"1"},{"COMMAND":"sshd","PID":"512"},...]
+# or let the data name itself from a header row
+ps -eo pid,comm | json_encode -H
+[{"COMMAND":"systemd","PID":1},{"COMMAND":"sshd","PID":512},...]
 ```
 
-**Real numbers and booleans** (`-t`)
+**Keep everything as strings** (`--raw`)
 
 ```bash
-echo -e "status 200\ncached true" | json_encode -kv -t
-{"cached":true,"status":200}
+echo -e "id 007\nport 5432" | json_encode -k --raw
+{"id":"007","port":"5432"}
 ```
 
-**Newline-delimited JSON for log shippers** (`-nd`)
+**Newline-delimited JSON for log shippers** (`-l`)
 
 ```bash
-echo -e "a\nb\nc" | json_encode -nd
+echo -e "a\nb\nc" | json_encode -l
 "a"
 "b"
 "c"
 ```
 
-**Custom separator**
+**Custom delimiter** (`-d`)
 
 ```bash
-echo -e "a,b,c\nd,e,f" | json_encode -sc -s ,
+echo -e "a,b,c\nd,e,f" | json_encode -c -d ,
 [["a","b","c"],["d","e","f"]]
 ```
 
-**Pretty-print**
+## Upgrading from 2.x
 
-```bash
-seq 1 3 | json_encode -p
-[
-  "1",
-  "2",
-  "3"
-]
-```
+3.0 renames flags for consistency (GNU-style short + long) and turns two former
+flags into defaults. Old flag → new flag:
+
+| 2.x | 3.0 |
+|-----|-----|
+| `-s SEP` | `-d, --delimiter SEP` |
+| `-sc` | `-c, --columns` |
+| `-cols A,B` | `-n, --names A,B` |
+| `-header` | `-H, --header` |
+| `-kv` | `-k, --kv` |
+| `-w` | *(now the default; use `-d` for a literal delimiter)* |
+| `-t` | *(type inference is now on; use `--raw` to disable)* |
+| `-nd` | `-l, --jsonl` |
+| `-stream` | `-F, --follow` |
+| `-o` (wrap) | `--wrap` |
+| *(n/a)* | `-o, --output FILE` now writes to a file |
+| `-v` / `-version` | `-V, --version` |
 
 ## Advanced usage
 
@@ -137,151 +175,79 @@ systemctl list-units --state=failed --no-legend \
 ["nginx.service","mysql.service"]
 ```
 
-Post directly to a webhook:
+### Processes as typed objects, no `tr -s` needed
+
+Whitespace splitting and a header row turn `ps` straight into self-describing,
+typed records:
 
 ```bash
-curl -s -X POST https://hooks.slack.com/... \
-  -H 'Content-Type: application/json' \
-  -d "{\"text\": \"Failed units: $(systemctl list-units --state=failed --no-legend | awk '{print $1}' | json_encode)\"}"
+ps -eo pid,comm,pcpu,rss | json_encode -H -l
+{"COMMAND":"systemd","PID":1,"%CPU":0,"RSS":12344}
+{"COMMAND":"sshd","PID":512,"%CPU":0.1,"RSS":4096}
 ```
 
-### Parse /etc/passwd into structured rows
-
-```bash
-cut -d: -f1,3,6 /etc/passwd | json_encode -sc -s :
-[["root","0","/root"],["nobody","65534","/nonexistent"],...]
-```
-
-### Snapshot running processes for a diff later
-
-```bash
-ps -eo pid,comm,pcpu --no-headers | tr -s ' ' | json_encode -sc
-[["1","systemd","0.0"],["512","sshd","0.1"],...]
-```
-
-### Turn /proc/meminfo into a key-value object
-
-```bash
-grep -E 'MemTotal|MemFree|MemAvailable' /proc/meminfo \
-  | awk '{print $1, $2}' \
-  | json_encode -kv
-{"MemAvailable:":"7502432","MemFree:":"1234","MemTotal:":"16384000"}
-```
-
-### Map running containers to their image
-
-```bash
-docker ps --format '{{.ID}}\t{{.Image}}' \
-  | json_encode -kv -s $'\t'
-{"a1b2c3d4":"nginx:latest","b5c6d7e8":"redis:7"}
-```
-
-### Export environment as a JSON object
-
-```bash
-env | json_encode -kv -s =
-{"HOME":"/root","PATH":"/usr/bin:/bin","USER":"root",...}
-```
-
-### Active SSH sessions as a JSON array
-
-```bash
-who | awk '{print $1"@"$2}' | json_encode
-["alice@pts/0","bob@pts/1"]
-```
-
-### Git log as structured records
-
-```bash
-git log --date=local --pretty=format:"%h|%an|%ad|%s" -n 3 \
-  | json_encode -sc -s "|" -p
-[
-  ["a1b2c3d", "Alice", "Mon Jun 2 10:00:00 2025", "fix: handle timeout"],
-  ["b2c3d4e", "Bob",   "Sun Jun 1 18:30:00 2025", "feat: add retry logic"]
-]
-```
-
-### Filter error logs and ship to an API
-
-```bash
-journalctl -u nginx --since "1 hour ago" --no-pager \
-  | grep -i error \
-  | json_encode \
-  | curl -s -X POST https://logs.example.com/ingest \
-      -H 'Content-Type: application/json' -d @-
-```
-
-### Audit open ports
-
-```bash
-ss -tlnp | awk 'NR>1 {print $4, $6}' | json_encode -sc
-[["0.0.0.0:22","users:(\"sshd\",pid=512)"],["0.0.0.0:80","users:(\"nginx\")"]]
-```
-
-### Check disk usage thresholds in a script
-
-```bash
-df -h --output=source,pcent | tail -n +2 | tr -d ' %' \
-  | json_encode -kv \
-  | jq 'to_entries[] | select(.value | tonumber > 80) | .key'
-"/dev/sda1"
-```
-
-### Processes as typed objects for a metrics pipeline
-
-`-w` collapses the padded columns (no `tr -s`), `-cols` names them, `-t` turns the
-numerics into real numbers, and `-nd` emits one object per line — ready to pipe
-straight into Elasticsearch `_bulk`, Loki, Vector or Fluent Bit.
-
-```bash
-ps -eo pid,comm,pcpu,rss --no-headers \
-  | json_encode -sc -w -cols pid,comm,cpu,rss_kb -t -nd
-{"comm":"systemd","cpu":0,"pid":1,"rss_kb":12344}
-{"comm":"sshd","cpu":0.1,"pid":512,"rss_kb":4096}
-```
+`-l` emits one object per line — ready to pipe into Elasticsearch `_bulk`, Loki,
+Vector or Fluent Bit.
 
 ### `docker ps` straight to objects — no `jq` needed
 
-A header row plus `-tsv` gives you self-describing records in one step.
-
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' \
-  | json_encode -tsv -header
+  | json_encode --tsv -H
 [{"IMAGE":"nginx:latest","NAMES":"web","STATUS":"Up 2 hours"},
  {"IMAGE":"redis:7","NAMES":"cache","STATUS":"Up 5 days"}]
 ```
 
 ### Numeric thresholds without `tonumber`
 
-With `-t`, values arrive as real numbers, so `jq` comparisons just work:
+Numbers arrive typed, so `jq` comparisons just work:
 
 ```bash
 df -h --output=source,pcent | tail -n +2 | tr -d ' %' \
-  | json_encode -kv -t \
+  | json_encode -k \
   | jq -c 'to_entries | map(select(.value > 80)) | map(.key)'
 ["/dev/sda1","/dev/sdc1"]
 ```
 
 ### Project columns without `cut`
 
-`-f` picks fields by 1-based index, and pairs with `-cols` to name them — replacing
-a `cut`/`awk` pre-stage:
+`-f` picks fields (with ranges), and pairs with `-n` to name them:
 
 ```bash
 # user, uid and shell from /etc/passwd, as named objects
-json_encode -s : -f 1,3,7 -cols user,uid,shell /etc/passwd
-[{"shell":"/bin/bash","uid":"0","user":"root"},...]
+json_encode -d : -f 1,3,7 -n user,uid,shell /etc/passwd
+[{"shell":"/bin/bash","uid":0,"user":"root"},...]
 ```
 
 ### Parse a CSV report and query it
 
-File arguments and proper CSV parsing (quoted fields honoured) let you treat a
-report like a tiny database:
+File arguments auto-detect `.csv`/`.tsv`, and quoted fields are honoured:
 
 ```bash
-json_encode -csv -header costs.csv \
+json_encode -H costs.csv \
   | jq '.[] | select(.service=="EC2") | .cost'
-"42.50"
+42.50
+```
+
+### Map running containers to their image
+
+```bash
+docker ps --format '{{.ID}}\t{{.Image}}' | json_encode -k -d $'\t'
+{"a1b2c3d4":"nginx:latest","b5c6d7e8":"redis:7"}
+```
+
+### Export environment as a JSON object
+
+```bash
+env | json_encode -k -d =
+{"HOME":"/root","PATH":"/usr/bin:/bin","USER":"root",...}
+```
+
+### Git log as structured records
+
+```bash
+git log --pretty=format:"%h|%an|%ad|%s" -n 3 | json_encode -c -d "|" -n hash,author,date,subject
+[{"author":"Alice","date":"...","hash":"a1b2c3d","subject":"fix: handle timeout"},...]
 ```
 
 ### Inventory files safely with `find -print0`
@@ -295,12 +261,12 @@ find /var/log -name '*.log' -print0 | json_encode -0
 
 ### Stamp a snapshot with host and timestamp
 
-`-o` wraps the output with `host` and a UTC `timestamp` — a self-contained audit
-record you can drop into an API or object store:
+`--wrap` envelopes the output with `host` and a UTC `timestamp` — a self-contained
+audit record. `-o` writes it straight to a file:
 
 ```bash
-rpm -qa | sort | json_encode -o
-{"data":["acl-2.3.1","bash-5.2.15",...],"host":"web01","timestamp":"2026-06-04T21:00:00Z"}
+rpm -qa | sort | json_encode --wrap -o /var/audit/packages.json
+# {"data":["acl-2.3.1","bash-5.2.15",...],"host":"web01","timestamp":"2026-06-05T08:00:00Z"}
 ```
 
 ### Ship access.log to Loki
@@ -311,7 +277,7 @@ Loki's push API expects `{"streams":[{"stream":{labels},"values":[["timestamp_ns
 
 ```bash
 tail -n 500 /var/log/nginx/access.log \
-  | json_encode \
+  | json_encode --raw \
   | jq -c --arg job nginx --arg host "$(hostname)" \
       '{streams:[{stream:{job:$job,host:$host},
                   values:[.[] | [(now*1e9|tostring), .]]}]}' \
@@ -326,7 +292,7 @@ nginx default log format: `IP - - [date] "METHOD path proto" status bytes`
 ```bash
 tail -n 500 /var/log/nginx/access.log \
   | awk '{print $1"|"$7"|"$9}' \
-  | json_encode -sc -s '|' \
+  | json_encode -c -d '|' --raw \
   | jq -c --arg host "$(hostname)" \
       '[.[] | {ip:.[0], path:.[1], status:.[2]}] |
        {streams:[{stream:{job:"nginx",host:$host},
@@ -338,12 +304,12 @@ tail -n 500 /var/log/nginx/access.log \
 
 **Tail in real time — ship each new line as it arrives:**
 
-`-stream` emits one JSON value per line the moment it appears (no `while read`
+`-F/--follow` emits one JSON value per line the moment it appears (no `while read`
 loop, no waiting for EOF):
 
 ```bash
 tail -f /var/log/nginx/access.log \
-  | json_encode -stream -nd \
+  | json_encode -F -l --raw \
   | while IFS= read -r line; do
       printf '%s' "$line" \
         | jq -c --arg host "$(hostname)" \
