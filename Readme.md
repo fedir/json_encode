@@ -174,3 +174,51 @@ df -h --output=source,pcent | tail -n +2 | tr -d ' %' \
   | jq 'to_entries[] | select(.value | tonumber > 80) | .key'
 "/dev/sda1"
 ```
+
+### Ship access.log to Loki
+
+Loki's push API expects `{"streams":[{"stream":{labels},"values":[["timestamp_ns","line"],...]}]}`.
+
+**Batch — send the last N lines on a schedule (e.g. from cron):**
+
+```bash
+tail -n 500 /var/log/nginx/access.log \
+  | json_encode \
+  | jq -c --arg job nginx --arg host "$(hostname)" \
+      '{streams:[{stream:{job:$job,host:$host},
+                  values:[.[] | [(now*1e9|tostring), .]]}]}' \
+  | curl -s -X POST http://loki:3100/loki/api/v1/push \
+        -H 'Content-Type: application/json' -d @-
+```
+
+**Structured — parse fields and attach them as Loki stream labels:**
+
+nginx default log format: `IP - - [date] "METHOD path proto" status bytes`
+
+```bash
+tail -n 500 /var/log/nginx/access.log \
+  | awk '{print $1"|"$7"|"$9}' \
+  | json_encode -sc -s '|' \
+  | jq -c --arg host "$(hostname)" \
+      '[.[] | {ip:.[0], path:.[1], status:.[2]}] |
+       {streams:[{stream:{job:"nginx",host:$host},
+                  values:[.[] | [(now*1e9|tostring),
+                                 ("ip="+.ip+" path="+.path+" status="+.status)]]}]}' \
+  | curl -s -X POST http://loki:3100/loki/api/v1/push \
+        -H 'Content-Type: application/json' -d @-
+```
+
+**Tail in real time — ship each new line as it arrives:**
+
+```bash
+tail -f /var/log/nginx/access.log \
+  | while IFS= read -r line; do
+      printf '%s\n' "$line" \
+        | json_encode \
+        | jq -c --arg host "$(hostname)" \
+            '{streams:[{stream:{job:"nginx",host:$host},
+                        values:[[(now*1e9|tostring), .[0]]]}]}' \
+        | curl -s -X POST http://loki:3100/loki/api/v1/push \
+              -H 'Content-Type: application/json' -d @-
+    done
+```
