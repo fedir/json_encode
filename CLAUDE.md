@@ -48,3 +48,10 @@ Single-package `main` with no external dependencies. All logic lives in `json_en
 
 Tests are in `json_encode_test.go` (unit) and `Makefile` `functional-test` target (shell integration).
 
+## Testing strategy
+
+- **Unit tests** (`json_encode_test.go`) — cover pure Go functions in isolation
+- **Functional tests** (`make functional-test`) — shell pipelines that exercise the compiled binary end-to-end; grouped by topic: basic, sysadmin, key-value, Loki
+- **Loki tests** do not require a running Loki instance; they validate the JSON payload shape using `jq -e` assertions (structure, field values, array lengths). `curl` is never called in tests.
+- `jq` must be available on the test machine (`brew install jq` / `apt install jq`)
+

@@ -82,6 +82,27 @@ functional-test: build
 	echo "$$out" | grep -qF '"nginx":"1234"' && \
 	echo "$$out" | grep -qF '"postgres":"5678"' && \
 	echo "PASS: kv tab service-pid" || (echo "FAIL: kv tab service-pid"; exit 1)
+	# loki batch: raw lines produce a valid Loki push payload (has streams, values, ns timestamp)
+	out=$$(printf '10.0.0.1 - - [01/Jun/2025:12:00:00 +0000] "GET /health HTTP/1.1" 200 5\n10.0.0.2 - - [01/Jun/2025:12:00:01 +0000] "POST /api HTTP/1.1" 201 42\n' \
+		| ./$(BINARY) \
+		| jq -c --arg job nginx --arg host testhost \
+		    '{streams:[{stream:{job:$$job,host:$$host},values:[.[]|[(now*1e9|tostring),.]] }]}'); \
+	echo "$$out" | jq -e '.streams[0].stream.job == "nginx"' > /dev/null && \
+	echo "$$out" | jq -e '.streams[0].values | length == 2' > /dev/null && \
+	echo "$$out" | jq -e '.streams[0].values[0] | length == 2' > /dev/null && \
+	echo "$$out" | jq -e '.streams[0].values[0][1] | contains("GET /health")' > /dev/null && \
+	echo "PASS: loki batch payload" || (echo "FAIL: loki batch payload"; exit 1)
+	# loki structured: parsed fields produce per-line label strings
+	out=$$(printf '10.0.0.1 - - [01/Jun/2025:12:00:00 +0000] "GET /health HTTP/1.1" 200 5\n10.0.0.2 - - [01/Jun/2025:12:00:01 +0000] "POST /api HTTP/1.1" 404 12\n' | awk '{print $$1"|"$$7"|"$$9}' | ./$(BINARY) -sc -s '|' | jq -c --arg host testhost '[.[]|{ip:.[0],path:.[1],status:.[2]}]|{streams:[{stream:{job:"nginx",host:$$host},values:[.[]|[(now*1e9|tostring),("ip="+.ip+" path="+.path+" status="+.status)]]}]}'); \
+	echo "$$out" | jq -e '.streams[0].values | length == 2' > /dev/null && \
+	echo "$$out" | jq -e '.streams[0].values[0][1] | startswith("ip=10.0.0.1")' > /dev/null && \
+	echo "$$out" | jq -e '.streams[0].values[1][1] | contains("status=404")' > /dev/null && \
+	echo "PASS: loki structured payload" || (echo "FAIL: loki structured payload"; exit 1)
+	# loki single line: real-time path produces a single-value stream
+	out=$$(printf '10.0.0.1 - - [01/Jun/2025:12:00:00 +0000] "DELETE /item/9 HTTP/1.1" 204 0\n' | ./$(BINARY) | jq -c --arg host testhost '{streams:[{stream:{job:"nginx",host:$$host},values:[[(now*1e9|tostring),.[0]]]}]}'); \
+	echo "$$out" | jq -e '.streams[0].values | length == 1' > /dev/null && \
+	echo "$$out" | jq -e '.streams[0].values[0][1] | contains("DELETE")' > /dev/null && \
+	echo "PASS: loki single-line payload" || (echo "FAIL: loki single-line payload"; exit 1)
 
 clean:
 	rm -f $(BINARY) coverage.out
