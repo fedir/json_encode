@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -15,6 +15,7 @@ import (
 
 var (
 	useSimpleColumns = flag.Bool("sc", false, "Enable simple columns, lines will be splitted by defined separator")
+	useKeyValue      = flag.Bool("kv", false, "Key-value mode: first column becomes key, remainder becomes value")
 	separator        = flag.String("s", " ", "Separator for lines splitting")
 	printPretty      = flag.Bool("p", false, "Pretty-printing")
 )
@@ -23,7 +24,7 @@ var (
 func GetInputData() string {
 	var data []byte
 	var err error
-	data, err = ioutil.ReadAll(os.Stdin)
+	data, err = io.ReadAll(os.Stdin)
 	if err != nil {
 		panic(err)
 	}
@@ -68,12 +69,28 @@ func ConvertToJSON(v interface{}) []byte {
 	return JSON
 }
 
+func ConvertLinesToKeyValue(inputLines []string) map[string]string {
+	result := make(map[string]string, len(inputLines))
+	for _, line := range inputLines {
+		parts := strings.SplitN(line, *separator, 2)
+		if len(parts) == 2 {
+			result[parts[0]] = parts[1]
+		} else {
+			result[parts[0]] = ""
+		}
+	}
+	return result
+}
+
 func main() {
 	flag.Parse()
 	JSON := make([]byte, 0)
-	if *useSimpleColumns {
+	switch {
+	case *useKeyValue:
+		JSON = ConvertToJSON(ConvertLinesToKeyValue(ConvertInputToLines(GetInputData())))
+	case *useSimpleColumns:
 		JSON = ConvertToJSON(ConvertLinesToTable(ConvertInputToLines(GetInputData())))
-	} else {
+	default:
 		JSON = ConvertToJSON(ConvertInputToLines(GetInputData()))
 	}
 
