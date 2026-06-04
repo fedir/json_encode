@@ -7,12 +7,13 @@ import (
 	"bufio"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,47 +23,32 @@ import (
 // version is overridden at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
-var (
-	useSimpleColumns = flag.Bool("sc", false, "Simple columns: split each line into an array of fields")
-	useKeyValue      = flag.Bool("kv", false, "Key-value mode: first field becomes key, remainder becomes value")
-	separator        = flag.String("s", " ", "Separator for splitting lines into fields")
-	printPretty      = flag.Bool("p", false, "Pretty-print the JSON output")
-	columnNames      = flag.String("cols", "", "Comma-separated column names; emit an array of objects")
-	useHeader        = flag.Bool("header", false, "Use the first input line as the object keys")
-	inferTypes       = flag.Bool("t", false, "Infer numbers, booleans and null instead of strings")
-	ndjson           = flag.Bool("nd", false, "Emit newline-delimited JSON (one value per line)")
-	streamMode       = flag.Bool("stream", false, "Stream line-by-line; emit each line as it arrives (great with tail -f)")
-	useWhitespace    = flag.Bool("w", false, "Split on runs of whitespace, awk-style (ignores -s)")
-	fieldSpec        = flag.String("f", "", "Select fields by 1-based index, e.g. 1,3,6")
-	useCSV           = flag.Bool("csv", false, "Parse input as CSV, honouring quoted fields")
-	useTSV           = flag.Bool("tsv", false, "Parse input as TSV (tab-separated), honouring quoted fields")
-	nulDelim         = flag.Bool("0", false, "Split input on NUL bytes instead of newlines (pairs with find -print0)")
-	wrapObject       = flag.Bool("o", false, "Wrap the output in an object with host, timestamp and data fields")
-	showVersion      = flag.Bool("version", false, "Print version and exit")
-	showVersionShort = flag.Bool("v", false, "Print version and exit (alias for -version)")
-)
-
-func init() {
-	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, `json_encode — turn shell output into JSON, one pipe away.
-
-Usage: json_encode [flags] [file ...]
-
-With no file arguments, input is read from stdin.
-
-Flags:
-`)
-		flag.PrintDefaults()
-		fmt.Fprint(os.Stderr, `
-Examples:
-  seq 1 5 | json_encode                          ["1","2","3","4","5"]
-  printf 'a 1\nb 2\n' | json_encode -sc          [["a","1"],["b","2"]]
-  ps -eo pid,comm | json_encode -sc -w -header   [{"PID":"1","COMMAND":"systemd"},...]
-  printf 'x 200\n' | json_encode -kv -t          {"x":200}
-  printf 'a\nb\n'  | json_encode -nd             "a"<newline>"b"
-  tail -f app.log | json_encode -stream -nd      stream one JSON line per log line
-`)
-	}
+// config holds every resolved command-line option.
+type config struct {
+	// modes
+	columns bool
+	names   string
+	header  bool
+	kv      bool
+	csv     bool
+	tsv     bool
+	// splitting / input
+	delimiter    string
+	delimiterSet bool
+	fields       string
+	nullDelim    bool
+	files        []string
+	// output
+	pretty  bool
+	compact bool
+	color   string
+	noColor bool
+	raw     bool
+	jsonl   bool
+	follow  bool
+	output  string
+	wrap    bool
+	version bool
 }
 
 type encodeMode int
@@ -74,52 +60,131 @@ const (
 	modeKeyValue
 )
 
-// GetInputData gets data from stdin. Retained for backward compatibility.
-func GetInputData() string {
-	data, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
+// ANSI colors for the syntax-highlighted output (jq-like).
+const (
+	colReset = "\x1b[0m"
+	colKey   = "\x1b[34;1m" // bold blue
+	colStr   = "\x1b[32m"   // green
+	colBool  = "\x1b[33m"   // yellow
+	colNull  = "\x1b[1;30m" // bright black
+)
+
+func usageText() string {
+	return `json_encode ` + version + ` — turn shell output into JSON, one pipe away.
+
+Usage: json_encode [flags] [file ...]
+
+With no file arguments, input is read from stdin. On a terminal the output is
+pretty-printed and colorized; when piped or redirected it is compact.
+
+Modes (pick one; default = array of one string per line):
+  -c, --columns        split each line into fields  → array of arrays
+  -n, --names a,b,c    split, emit array of objects with these keys
+  -H, --header         split, first row supplies the object keys
+  -k, --kv             object {first field: remainder}
+      --csv, --tsv     parse as CSV/TSV (quoted fields); with -H → objects
+
+Splitting & input:
+  -d, --delimiter STR  field separator (default: runs of whitespace, awk-style)
+  -f, --fields LIST    keep 1-based fields, supports ranges, e.g. 1-3,7
+  -0, --null           read NUL-delimited input (find -print0)
+
+Output:
+  -p, --pretty         force pretty (multi-line)
+      --compact        force compact (single line)
+      --color MODE     auto (default) | always | never
+      --no-color       alias for --color=never
+      --raw            keep every value a string (disable type inference)
+  -l, --jsonl          newline-delimited JSON, one value per line
+  -F, --follow         stream line-by-line as input arrives (tail -f)
+  -o, --output FILE    write to FILE instead of stdout
+      --wrap           wrap output in {host, timestamp, data}
+  -V, --version        print version and exit
+  -h, --help           show this help
+
+Examples:
+  seq 1 5 | json_encode                       [1,2,3,4,5]
+  ps -eo pid,comm,pcpu | json_encode -H        [{"COMMAND":"systemd","PID":1,...},...]
+  printf 'host db\nport 5432\n' | json_encode -k   {"host":"db","port":5432}
+  tail -f app.log | json_encode -F -l          one JSON line per log line
+`
 }
 
-// readInput reads from the named file arguments, or stdin when none are given.
-func readInput() string {
-	files := flag.Args()
-	if len(files) == 0 {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			log.Fatal("Cannot read stdin: ", err)
+// parseArgs builds a fresh FlagSet (so the function is re-entrant and testable)
+// and registers every flag under both its short and long name.
+func parseArgs(args []string) (config, error) {
+	var c config
+	fs := flag.NewFlagSet("json_encode", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {} // we print usageText() ourselves
+
+	fs.BoolVar(&c.columns, "c", false, "")
+	fs.BoolVar(&c.columns, "columns", false, "")
+	fs.StringVar(&c.names, "n", "", "")
+	fs.StringVar(&c.names, "names", "", "")
+	fs.BoolVar(&c.header, "H", false, "")
+	fs.BoolVar(&c.header, "header", false, "")
+	fs.BoolVar(&c.kv, "k", false, "")
+	fs.BoolVar(&c.kv, "kv", false, "")
+	fs.BoolVar(&c.csv, "csv", false, "")
+	fs.BoolVar(&c.tsv, "tsv", false, "")
+
+	fs.StringVar(&c.delimiter, "d", "", "")
+	fs.StringVar(&c.delimiter, "delimiter", "", "")
+	fs.StringVar(&c.fields, "f", "", "")
+	fs.StringVar(&c.fields, "fields", "", "")
+	fs.BoolVar(&c.nullDelim, "0", false, "")
+	fs.BoolVar(&c.nullDelim, "null", false, "")
+
+	fs.BoolVar(&c.pretty, "p", false, "")
+	fs.BoolVar(&c.pretty, "pretty", false, "")
+	fs.BoolVar(&c.compact, "compact", false, "")
+	fs.StringVar(&c.color, "color", "auto", "")
+	fs.BoolVar(&c.noColor, "no-color", false, "")
+	fs.BoolVar(&c.raw, "raw", false, "")
+	fs.BoolVar(&c.jsonl, "l", false, "")
+	fs.BoolVar(&c.jsonl, "jsonl", false, "")
+	fs.BoolVar(&c.follow, "F", false, "")
+	fs.BoolVar(&c.follow, "follow", false, "")
+	fs.StringVar(&c.output, "o", "", "")
+	fs.StringVar(&c.output, "output", "", "")
+	fs.BoolVar(&c.wrap, "wrap", false, "")
+	fs.BoolVar(&c.version, "V", false, "")
+	fs.BoolVar(&c.version, "version", false, "")
+
+	if err := fs.Parse(args); err != nil {
+		return c, err
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "d" || f.Name == "delimiter" {
+			c.delimiterSet = true
 		}
-		return string(data)
+	})
+	c.files = fs.Args()
+	return c, nil
+}
+
+// --- input ---------------------------------------------------------------
+
+func readInput(files []string, stdin io.Reader) (string, error) {
+	if len(files) == 0 {
+		b, err := io.ReadAll(stdin)
+		return string(b), err
 	}
 	var sb strings.Builder
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
-			log.Fatalf("Cannot read %s: %v", f, err)
+			return "", err
 		}
 		sb.Write(b)
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
-// ConvertInputToLines converts single input into separated elements.
-func ConvertInputToLines(inputString string) []string {
-	inputLines := make([]string, 0)
-	lines := strings.Split(inputString, "\n")
-	for _, line := range lines {
-		if line != "" {
-			inputLines = append(inputLines, line)
-		}
-	}
-	return inputLines
-}
-
-// splitRecords splits raw input into non-empty records, on NUL or newline.
-func splitRecords(input string) []string {
+func splitRecords(input string, null bool) []string {
 	sep := "\n"
-	if *nulDelim {
+	if null {
 		sep = "\x00"
 	}
 	parts := strings.Split(input, sep)
@@ -133,80 +198,26 @@ func splitRecords(input string) []string {
 	return out
 }
 
-// ConvertLinesToTable converts each line into a slice of fields.
-func ConvertLinesToTable(inputLines []string) [][]string {
-	linesWithColumns := make([][]string, 0)
-	for _, inputLine := range inputLines {
-		if inputLine != "" {
-			linesWithColumns = append(linesWithColumns, strings.Split(inputLine, *separator))
-		}
+func readCSVRows(input string, tsv bool) ([][]string, error) {
+	r := csv.NewReader(strings.NewReader(input))
+	r.FieldsPerRecord = -1
+	if tsv {
+		r.Comma = '\t'
 	}
-	return linesWithColumns
+	return r.ReadAll()
 }
 
-// ConvertLinesToKeyValue maps the first field to the remainder. Retained for
-// backward compatibility; the live path uses splitKV/coerce.
-func ConvertLinesToKeyValue(inputLines []string) map[string]string {
-	result := make(map[string]string, len(inputLines))
-	for _, line := range inputLines {
-		parts := strings.SplitN(line, *separator, 2)
-		if len(parts) == 2 {
-			result[parts[0]] = parts[1]
-		} else {
-			result[parts[0]] = ""
-		}
-	}
-	return result
-}
+// --- splitting -----------------------------------------------------------
 
-// ConvertToJSON converts a value into JSON, honouring -p.
-func ConvertToJSON(v interface{}) []byte {
-	var err error
-	var JSON []byte
-	if *printPretty {
-		JSON, err = json.MarshalIndent(v, "", "  ")
-	} else {
-		JSON, err = json.Marshal(v)
-	}
-	if err != nil {
-		log.Fatal("Cannot encode to JSON ", err)
-	}
-	return JSON
-}
-
-// coerce optionally turns a string into a number, bool or null when -t is set.
-func coerce(s string) interface{} {
-	if !*inferTypes {
-		return s
-	}
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true":
-		return true
-	case "false":
-		return false
-	case "null", "nil", "~":
-		return nil
-	}
-	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) {
-		return f
-	}
-	return s
-}
-
-// splitFields splits one record into fields, honouring -w and -s.
-func splitFields(line string) []string {
-	if *useWhitespace {
+func (c config) splitFields(line string) []string {
+	if !c.delimiterSet {
 		return strings.Fields(line)
 	}
-	return strings.Split(line, *separator)
+	return strings.Split(line, c.delimiter)
 }
 
-// splitKV splits one record into key and value (value is the remainder).
-func splitKV(line string) (string, string) {
-	if *useWhitespace {
+func (c config) splitKV(line string) (string, string) {
+	if !c.delimiterSet {
 		trimmed := strings.TrimLeft(line, " \t\r\f\v")
 		i := strings.IndexFunc(trimmed, unicode.IsSpace)
 		if i < 0 {
@@ -214,35 +225,44 @@ func splitKV(line string) (string, string) {
 		}
 		return trimmed[:i], strings.TrimLeft(trimmed[i:], " \t\r\f\v")
 	}
-	parts := strings.SplitN(line, *separator, 2)
+	parts := strings.SplitN(line, c.delimiter, 2)
 	if len(parts) == 2 {
 		return parts[0], parts[1]
 	}
 	return parts[0], ""
 }
 
-// parseFieldSpec parses "1,3,6" into a list of 1-based indices.
-func parseFieldSpec(spec string) []int {
+func parseFieldSpec(spec string) ([]int, error) {
 	if spec == "" {
-		return nil
+		return nil, nil
 	}
-	parts := strings.Split(spec, ",")
-	idx := make([]int, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
+	var idx []int
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
 			continue
 		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			log.Fatalf("Invalid -f field index %q: %v", p, err)
+		if strings.Contains(part, "-") {
+			bounds := strings.SplitN(part, "-", 2)
+			lo, err1 := strconv.Atoi(strings.TrimSpace(bounds[0]))
+			hi, err2 := strconv.Atoi(strings.TrimSpace(bounds[1]))
+			if err1 != nil || err2 != nil || lo < 1 || hi < lo {
+				return nil, fmt.Errorf("invalid -f range %q", part)
+			}
+			for i := lo; i <= hi; i++ {
+				idx = append(idx, i)
+			}
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("invalid -f field %q", part)
 		}
 		idx = append(idx, n)
 	}
-	return idx
+	return idx, nil
 }
 
-// selectFields keeps only the requested 1-based field indices, in order.
 func selectFields(fields []string, idx []int) []string {
 	if len(idx) == 0 {
 		return fields
@@ -256,18 +276,34 @@ func selectFields(fields []string, idx []int) []string {
 	return out
 }
 
-// readCSVRows parses the whole input as CSV/TSV into rows of fields.
-func readCSVRows(input string) [][]string {
-	r := csv.NewReader(strings.NewReader(input))
-	r.FieldsPerRecord = -1
-	if *useTSV {
-		r.Comma = '\t'
+// --- value building ------------------------------------------------------
+
+// coerce turns a string into a number/bool/null when it round-trips exactly,
+// so leading-zero IDs, versions, IPs and the like stay strings.
+func coerce(s string, raw bool) interface{} {
+	if raw {
+		return s
 	}
-	rows, err := r.ReadAll()
-	if err != nil {
-		log.Fatal("Cannot parse CSV ", err)
+	switch s {
+	case "true":
+		return true
+	case "false":
+		return false
+	case "null":
+		return nil
 	}
-	return rows
+	if s == "" {
+		return s
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil && strconv.FormatInt(i, 10) == s {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) {
+		if strconv.FormatFloat(f, 'g', -1, 64) == s {
+			return f
+		}
+	}
+	return s
 }
 
 func columnKey(names []string, i int) string {
@@ -277,56 +313,58 @@ func columnKey(names []string, i int) string {
 	return "col" + strconv.Itoa(i+1)
 }
 
-func rowToObject(row []string, names []string) map[string]interface{} {
+type coerceFn func(string) interface{}
+
+func rowToObject(row, names []string, cf coerceFn) map[string]interface{} {
 	m := make(map[string]interface{}, len(row))
 	for i, f := range row {
-		m[columnKey(names, i)] = coerce(f)
+		m[columnKey(names, i)] = cf(f)
 	}
 	return m
 }
 
-func rowToArray(row []string) []interface{} {
+func rowToArray(row []string, cf coerceFn) []interface{} {
 	out := make([]interface{}, 0, len(row))
 	for _, f := range row {
-		out = append(out, coerce(f))
+		out = append(out, cf(f))
 	}
 	return out
 }
 
-func buildLines(records []string) []interface{} {
+func buildLines(records []string, cf coerceFn) []interface{} {
 	out := make([]interface{}, 0, len(records))
 	for _, r := range records {
-		out = append(out, coerce(r))
+		out = append(out, cf(r))
 	}
 	return out
 }
 
-func buildTable(rows [][]string) []interface{} {
+func buildTable(rows [][]string, cf coerceFn) []interface{} {
 	out := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, rowToArray(row))
+		out = append(out, rowToArray(row, cf))
 	}
 	return out
 }
 
-func buildObjects(rows [][]string, names []string) []interface{} {
+func buildObjects(rows [][]string, names []string, cf coerceFn) []interface{} {
 	out := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, rowToObject(row, names))
+		out = append(out, rowToObject(row, names, cf))
 	}
 	return out
 }
 
-func buildKeyValue(records []string) map[string]interface{} {
+func buildKeyValue(records []string, cfg config, cf coerceFn) map[string]interface{} {
 	m := make(map[string]interface{}, len(records))
 	for _, line := range records {
-		k, v := splitKV(line)
-		m[k] = coerce(v)
+		k, v := cfg.splitKV(line)
+		m[k] = cf(v)
 	}
 	return m
 }
 
-func rowsToKeyValue(rows [][]string) map[string]interface{} {
+func rowsToKeyValue(rows [][]string, cf coerceFn) map[string]interface{} {
 	m := make(map[string]interface{}, len(rows))
 	for _, row := range rows {
 		if len(row) == 0 {
@@ -336,34 +374,221 @@ func rowsToKeyValue(rows [][]string) map[string]interface{} {
 		if len(row) > 1 {
 			val = strings.Join(row[1:], " ")
 		}
-		m[row[0]] = coerce(val)
+		m[row[0]] = cf(val)
 	}
 	return m
 }
 
-func resolveMode() encodeMode {
+func splitNames(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
+
+func resolveMode(cfg config, useCSV, useTSV bool) encodeMode {
 	switch {
-	case *useKeyValue:
+	case cfg.kv:
 		return modeKeyValue
-	case *columnNames != "" || *useHeader:
+	case cfg.header || cfg.names != "":
 		return modeObjects
-	case *useSimpleColumns || *useCSV || *useTSV:
+	case cfg.columns || useCSV || useTSV:
 		return modeColumns
 	default:
 		return modeLines
 	}
 }
 
-func columnNamesFromFlag() []string {
-	if *columnNames == "" {
-		return nil
+// detectFormat resolves CSV/TSV, auto-detecting from a file extension unless an
+// explicit format or delimiter was given.
+func detectFormat(cfg config) (useCSV, useTSV bool) {
+	if cfg.csv {
+		return true, false
 	}
-	return strings.Split(*columnNames, ",")
+	if cfg.tsv {
+		return false, true
+	}
+	if !cfg.delimiterSet && len(cfg.files) > 0 {
+		f := strings.ToLower(cfg.files[0])
+		switch {
+		case strings.HasSuffix(f, ".csv"):
+			return true, false
+		case strings.HasSuffix(f, ".tsv"), strings.HasSuffix(f, ".tab"):
+			return false, true
+		}
+	}
+	return false, false
 }
 
-// output writes the final value, honouring -o (wrap) and -nd (ndjson).
-func output(v interface{}) {
-	if *wrapObject {
+func rowsOf(records []string, cfg config, idx []int) [][]string {
+	rows := make([][]string, 0, len(records))
+	for _, r := range records {
+		rows = append(rows, selectFields(cfg.splitFields(r), idx))
+	}
+	return rows
+}
+
+// --- output --------------------------------------------------------------
+
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+func useColor(cfg config, w io.Writer) bool {
+	mode := cfg.color
+	if cfg.noColor {
+		mode = "never"
+	}
+	switch mode {
+	case "always":
+		return true
+	case "never":
+		return false
+	default: // auto
+		if v, ok := os.LookupEnv("NO_COLOR"); ok && v != "" {
+			return false
+		}
+		return isTerminal(w)
+	}
+}
+
+func usePretty(cfg config, w io.Writer) bool {
+	if cfg.compact {
+		return false
+	}
+	if cfg.pretty {
+		return true
+	}
+	return isTerminal(w)
+}
+
+func writeIndent(w *bufio.Writer, depth int) {
+	for i := 0; i < depth; i++ {
+		w.WriteString("  ")
+	}
+}
+
+func sortedKeys(m map[string]interface{}) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
+}
+
+// encodeColored writes v with ANSI colors, mirroring json.MarshalIndent layout.
+func encodeColored(w *bufio.Writer, v interface{}, pretty bool, depth int) error {
+	switch val := v.(type) {
+	case nil:
+		w.WriteString(colNull + "null" + colReset)
+	case bool:
+		w.WriteString(colBool + strconv.FormatBool(val) + colReset)
+	case int64:
+		w.WriteString(strconv.FormatInt(val, 10))
+	case float64:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return err
+		}
+		w.Write(b)
+	case string:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return err
+		}
+		w.WriteString(colStr + string(b) + colReset)
+	case []interface{}:
+		if len(val) == 0 {
+			w.WriteString("[]")
+			return nil
+		}
+		w.WriteByte('[')
+		for i, e := range val {
+			if pretty {
+				w.WriteByte('\n')
+				writeIndent(w, depth+1)
+			}
+			if err := encodeColored(w, e, pretty, depth+1); err != nil {
+				return err
+			}
+			if i < len(val)-1 {
+				w.WriteByte(',')
+			}
+		}
+		if pretty {
+			w.WriteByte('\n')
+			writeIndent(w, depth)
+		}
+		w.WriteByte(']')
+	case map[string]interface{}:
+		keys := sortedKeys(val)
+		if len(keys) == 0 {
+			w.WriteString("{}")
+			return nil
+		}
+		w.WriteByte('{')
+		for i, k := range keys {
+			if pretty {
+				w.WriteByte('\n')
+				writeIndent(w, depth+1)
+			}
+			kb, err := json.Marshal(k)
+			if err != nil {
+				return err
+			}
+			w.WriteString(colKey + string(kb) + colReset)
+			w.WriteByte(':')
+			if pretty {
+				w.WriteByte(' ')
+			}
+			if err := encodeColored(w, val[k], pretty, depth+1); err != nil {
+				return err
+			}
+			if i < len(keys)-1 {
+				w.WriteByte(',')
+			}
+		}
+		if pretty {
+			w.WriteByte('\n')
+			writeIndent(w, depth)
+		}
+		w.WriteByte('}')
+	default:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return err
+		}
+		w.Write(b)
+	}
+	return nil
+}
+
+func writeValue(w *bufio.Writer, v interface{}, color, pretty bool) error {
+	if color {
+		return encodeColored(w, v, pretty, 0)
+	}
+	var b []byte
+	var err error
+	if pretty {
+		b, err = json.MarshalIndent(v, "", "  ")
+	} else {
+		b, err = json.Marshal(v)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
+}
+
+func emit(cfg config, w io.Writer, v interface{}) error {
+	if cfg.wrap {
 		host, _ := os.Hostname()
 		v = map[string]interface{}{
 			"host":      host,
@@ -371,90 +596,129 @@ func output(v interface{}) {
 			"data":      v,
 		}
 	}
-	if *ndjson {
+	color := useColor(cfg, w)
+	pretty := usePretty(cfg, w)
+	bw := bufio.NewWriter(w)
+	defer bw.Flush()
+
+	if cfg.jsonl {
 		if arr, ok := v.([]interface{}); ok {
-			w := bufio.NewWriter(os.Stdout)
-			defer w.Flush()
 			for _, e := range arr {
-				b, err := json.Marshal(e)
-				if err != nil {
-					log.Fatal("Cannot encode to JSON ", err)
+				if err := writeValue(bw, e, color, false); err != nil {
+					return err
 				}
-				w.Write(b)
-				w.WriteByte('\n')
+				bw.WriteByte('\n')
 			}
-			return
+			return nil
 		}
 	}
-	fmt.Fprintf(os.Stdout, "%s\n", ConvertToJSON(v))
+	if err := writeValue(bw, v, color, pretty); err != nil {
+		return err
+	}
+	return bw.WriteByte('\n')
 }
 
-// runBatch reads all input and emits a single JSON document (or ndjson).
-func runBatch() {
-	input := readInput()
-	mode := resolveMode()
-	names := columnNamesFromFlag()
-	idx := parseFieldSpec(*fieldSpec)
+// --- run -----------------------------------------------------------------
 
-	if *useCSV || *useTSV {
-		rows := readCSVRows(input)
+func fail(stderr io.Writer, code int, msg string) int {
+	fmt.Fprintln(stderr, "json_encode: "+msg)
+	return code
+}
+
+func run(cfg config, stdin io.Reader, stdout, stderr io.Writer) int {
+	if cfg.pretty && cfg.compact {
+		return fail(stderr, 2, "--pretty and --compact are mutually exclusive")
+	}
+	switch cfg.color {
+	case "auto", "always", "never":
+	default:
+		return fail(stderr, 2, "--color must be auto, always or never")
+	}
+	idx, err := parseFieldSpec(cfg.fields)
+	if err != nil {
+		return fail(stderr, 2, err.Error())
+	}
+
+	out := stdout
+	if cfg.output != "" {
+		f, err := os.Create(cfg.output)
+		if err != nil {
+			return fail(stderr, 1, err.Error())
+		}
+		defer f.Close()
+		out = f
+	}
+	cf := func(s string) interface{} { return coerce(s, cfg.raw) }
+
+	if cfg.follow {
+		return runStream(cfg, idx, cf, stdin, out, stderr)
+	}
+
+	input, err := readInput(cfg.files, stdin)
+	if err != nil {
+		return fail(stderr, 1, err.Error())
+	}
+	useCSV, useTSV := detectFormat(cfg)
+	mode := resolveMode(cfg, useCSV, useTSV)
+	names := splitNames(cfg.names)
+
+	var value interface{}
+	if useCSV || useTSV {
+		rows, err := readCSVRows(input, useTSV)
+		if err != nil {
+			return fail(stderr, 1, err.Error())
+		}
 		for i := range rows {
 			rows[i] = selectFields(rows[i], idx)
 		}
-		if *useHeader && len(rows) > 0 {
+		if cfg.header && len(rows) > 0 {
 			names = rows[0]
 			rows = rows[1:]
 		}
 		switch mode {
 		case modeKeyValue:
-			output(rowsToKeyValue(rows))
+			value = rowsToKeyValue(rows, cf)
 		case modeObjects:
-			output(buildObjects(rows, names))
+			value = buildObjects(rows, names, cf)
 		default:
-			output(buildTable(rows))
+			value = buildTable(rows, cf)
 		}
-		return
+	} else {
+		records := splitRecords(input, cfg.nullDelim)
+		if cfg.header && mode == modeObjects && cfg.names == "" && len(records) > 0 {
+			names = selectFields(cfg.splitFields(records[0]), idx)
+			records = records[1:]
+		}
+		switch mode {
+		case modeKeyValue:
+			value = buildKeyValue(records, cfg, cf)
+		case modeObjects:
+			value = buildObjects(rowsOf(records, cfg, idx), names, cf)
+		case modeColumns:
+			value = buildTable(rowsOf(records, cfg, idx), cf)
+		default:
+			value = buildLines(records, cf)
+		}
 	}
 
-	records := splitRecords(input)
-
-	if *useHeader && mode == modeObjects && names == nil && len(records) > 0 {
-		names = selectFields(splitFields(records[0]), idx)
-		records = records[1:]
+	if err := emit(cfg, out, value); err != nil {
+		return fail(stderr, 1, err.Error())
 	}
-
-	switch mode {
-	case modeKeyValue:
-		output(buildKeyValue(records))
-	case modeObjects:
-		rows := make([][]string, 0, len(records))
-		for _, r := range records {
-			rows = append(rows, selectFields(splitFields(r), idx))
-		}
-		output(buildObjects(rows, names))
-	case modeColumns:
-		rows := make([][]string, 0, len(records))
-		for _, r := range records {
-			rows = append(rows, selectFields(splitFields(r), idx))
-		}
-		output(buildTable(rows))
-	default:
-		output(buildLines(records))
-	}
+	return 0
 }
 
 // runStream reads stdin line by line and emits one JSON value per line as it
 // arrives, so it works with tail -f and other never-ending pipes.
-func runStream() {
-	mode := resolveMode()
-	names := columnNamesFromFlag()
-	idx := parseFieldSpec(*fieldSpec)
-	headerPending := *useHeader && names == nil
+func runStream(cfg config, idx []int, cf coerceFn, stdin io.Reader, out, stderr io.Writer) int {
+	mode := resolveMode(cfg, false, false)
+	names := splitNames(cfg.names)
+	headerPending := cfg.header && cfg.names == ""
+	color := useColor(cfg, out)
 
-	sc := bufio.NewScanner(os.Stdin)
+	sc := bufio.NewScanner(stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	w := bufio.NewWriter(os.Stdout)
-	defer w.Flush()
+	bw := bufio.NewWriter(out)
+	defer bw.Flush()
 
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
@@ -462,47 +726,52 @@ func runStream() {
 			continue
 		}
 		if headerPending {
-			names = selectFields(splitFields(line), idx)
+			names = selectFields(cfg.splitFields(line), idx)
 			headerPending = false
 			continue
 		}
 		var v interface{}
 		switch mode {
 		case modeKeyValue:
-			k, val := splitKV(line)
-			v = map[string]interface{}{k: coerce(val)}
+			k, val := cfg.splitKV(line)
+			v = map[string]interface{}{k: cf(val)}
 		case modeObjects:
-			v = rowToObject(selectFields(splitFields(line), idx), names)
+			v = rowToObject(selectFields(cfg.splitFields(line), idx), names, cf)
 		case modeColumns:
-			v = rowToArray(selectFields(splitFields(line), idx))
+			v = rowToArray(selectFields(cfg.splitFields(line), idx), cf)
 		default:
-			v = coerce(line)
+			v = cf(line)
 		}
-		b, err := json.Marshal(v)
-		if err != nil {
-			log.Fatal("Cannot encode to JSON ", err)
+		if err := writeValue(bw, v, color, false); err != nil {
+			return fail(stderr, 1, err.Error())
 		}
-		w.Write(b)
-		w.WriteByte('\n')
-		w.Flush()
+		bw.WriteByte('\n')
+		bw.Flush()
 	}
 	if err := sc.Err(); err != nil {
-		log.Fatal("Cannot read stdin: ", err)
+		return fail(stderr, 1, err.Error())
 	}
+	return 0
+}
+
+func realMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	cfg, err := parseArgs(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stdout, usageText())
+			return 0
+		}
+		fmt.Fprintln(stderr, "json_encode: "+err.Error())
+		fmt.Fprint(stderr, usageText())
+		return 2
+	}
+	if cfg.version {
+		fmt.Fprintf(stdout, "json_encode %s\n", version)
+		return 0
+	}
+	return run(cfg, stdin, stdout, stderr)
 }
 
 func main() {
-	flag.Parse()
-
-	if *showVersion || *showVersionShort {
-		fmt.Fprintf(os.Stdout, "json_encode %s\n", version)
-		return
-	}
-
-	if *streamMode {
-		runStream()
-		return
-	}
-
-	runBatch()
+	os.Exit(realMain(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
