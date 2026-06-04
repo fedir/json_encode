@@ -4,3 +4,4 @@ json_encode
 coverage.txt
 coverage.out
 dist/
+.DS_Store
