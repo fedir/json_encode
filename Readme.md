@@ -14,6 +14,8 @@ pretty-printed and colorized on a terminal but compact when piped.
 
 ![json_encode in action](demo/json_encode.gif)
 
+<sub>Demo recorded with [VHS](https://github.com/charmbracelet/vhs) — regenerate with `make demo` (script: [`demo/demo.tape`](demo/demo.tape)).</sub>
+
 ```bash
 $ printf 'host db.internal\nport 5432\n' | json_encode -k
 {
@@ -321,3 +323,17 @@ tail -f /var/log/nginx/access.log \
               -H 'Content-Type: application/json' -d @-
     done
 ```
+
+## Development
+
+```bash
+make build            # compile → ./json_encode
+make test             # go test -race ./...
+make vet              # go vet ./...
+make functional-test  # build + shell-level integration tests (needs jq)
+make demo             # regenerate the README GIF (needs vhs + gifsicle)
+make snapshot         # local GoReleaser build, no publish
+make clean            # remove build artifacts
+```
+
+Pure standard library, no runtime dependencies.

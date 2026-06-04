@@ -159,8 +159,16 @@ release:
 snapshot:
 	goreleaser release --snapshot --clean
 
+# Regenerate the README demo GIF from demo/demo.tape.
+# Needs: vhs, gifsicle (brew install vhs gifsicle). VHS drives a localhost ttyd,
+# so it must run outside a network sandbox. Scenes 4-6 hit a live kubectl cluster
+# and podman, so those tools must be reachable for an identical render.
+demo: build
+	vhs demo/demo.tape
+	gifsicle -O3 --lossy=30 -o demo/json_encode.gif demo/json_encode.gif
+
 clean:
 	rm -f $(BINARY) coverage.out
 	rm -rf dist
 
-.PHONY: build test vet clean functional-test release snapshot
+.PHONY: build test vet clean functional-test release snapshot demo

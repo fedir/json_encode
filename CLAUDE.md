@@ -21,6 +21,7 @@ make vet              # go vet ./...
 make functional-test  # build + run shell-level integration tests
 make snapshot         # goreleaser local snapshot build (no publish)
 make release          # goreleaser tagged release (CI/maintainer only)
+make demo             # regenerate the README GIF from demo/demo.tape
 make clean            # remove binary, coverage artifacts and dist/
 
 # Run a single test
@@ -99,6 +100,27 @@ amd64/arm64) and pushes a Homebrew formula to `fedir/homebrew-tap`. CI lives in
 `.github/workflows/`: `ci.yml` (vet + unit + functional on push/PR) and
 `release.yml` (GoReleaser on `v*` tags). The tap publish needs a
 `HOMEBREW_TAP_TOKEN` repo secret.
+
+## Demo GIF
+
+The README's animated demo lives at `demo/json_encode.gif`, scripted in
+`demo/demo.tape` (a [VHS](https://github.com/charmbracelet/vhs) tape) and rebuilt
+with `make demo`.
+
+- Requires `vhs` and `gifsicle` (`brew install vhs gifsicle`); VHS pulls `ttyd`
+  and `ffmpeg`.
+- VHS drives a headless browser against a localhost `ttyd`, so it **must run
+  outside a network sandbox** (the connection is refused otherwise).
+- VHS runs in a real PTY, so `json_encode` auto-detects the terminal and renders
+  pretty + colored output — that is what the GIF captures.
+- A `Hide` block puts the freshly built binary on `PATH` and sets `LC_ALL=C` so
+  numbers use dots; the demo opens directly on real commands, no `#` comments.
+- The tape is for a **LinkedIn/README** audience: real DevOps one-liners only
+  (shell `df`/`ps`/`git`, then `kubectl`, `podman`, and a `json_encode | jq`
+  finale). Scenes 4–6 need a reachable kubectl cluster and podman to reproduce the
+  exact frames; edit the tape for a different environment.
+- `make demo` runs `vhs demo/demo.tape` then `gifsicle -O3 --lossy=30` to keep the
+  file ~1 MB while text stays crisp.
 
 ## Testing strategy
 
